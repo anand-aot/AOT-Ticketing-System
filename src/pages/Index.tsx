@@ -190,7 +190,7 @@ const Index = () => {
                 <div className="text-xs text-muted-foreground space-y-1">
                   <div>• it.* → IT Infrastructure Owner</div>
                   <div>• hr.* → HR Owner</div>
-                  <div>• admin.* → Admin Owner</div>
+                  <div>• admin.* → Administration Owner</div>
                   <div>• accounts.* → Accounts Owner</div>
                   <div>• owner@ → System Owner (All Access)</div>
                   <div>• Others → Employee</div>
@@ -221,6 +221,10 @@ const Index = () => {
                   <span className="text-muted-foreground">HR Owner</span>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs">admin.head@company.com</Badge>
+                  <span className="text-muted-foreground">Administration Owner</span>
+                </div>
+                <div className="flex items-center gap-2">
                   <Badge variant="outline" className="text-xs">owner@company.com</Badge>
                   <span className="text-muted-foreground">Full System Access</span>
                 </div>
@@ -231,20 +235,33 @@ const Index = () => {
 
         {/* Stats Section */}
         <div className="grid md:grid-cols-4 gap-4 mt-16">
-          {[
-            { icon: TicketPlus, label: "Active Tickets", value: "247", color: "text-primary" },
-            { icon: Clock, label: "Avg Response", value: "2.4h", color: "text-warning" },
-            { icon: CheckCircle, label: "Resolved Today", value: "31", color: "text-success" },
-            { icon: Users, label: "Team Members", value: "18", color: "text-info" },
-          ].map((stat, index) => (
-            <Card key={index} className="text-center border-primary/10">
-              <CardContent className="pt-6">
-                <stat.icon className={`w-8 h-8 mx-auto mb-2 ${stat.color}`} />
-                <div className="text-2xl font-bold">{stat.value}</div>
-                <div className="text-sm text-muted-foreground">{stat.label}</div>
-              </CardContent>
-            </Card>
-          ))}
+          {(() => {
+            const allTickets = storageService.getTickets();
+            const todayTickets = allTickets.filter(t => 
+              new Date(t.createdAt).toDateString() === new Date().toDateString()
+            );
+            const closedTodayTickets = todayTickets.filter(t => t.status === "Closed");
+            const ticketsWithResponseTime = allTickets.filter(t => t.responseTime);
+            const avgResponseTime = ticketsWithResponseTime.length > 0
+              ? (ticketsWithResponseTime.reduce((sum, t) => sum + (t.responseTime || 0), 0) / ticketsWithResponseTime.length)
+              : 2.4;
+            const totalUsers = storageService.getUsers().length;
+            
+            return [
+              { icon: TicketPlus, label: "Active Tickets", value: allTickets.filter(t => t.status !== "Closed").length.toString(), color: "text-primary" },
+              { icon: Clock, label: "Avg Response", value: `${avgResponseTime.toFixed(1)}h`, color: "text-warning" },
+              { icon: CheckCircle, label: "Resolved Today", value: closedTodayTickets.length.toString(), color: "text-success" },
+              { icon: Users, label: "Team Members", value: totalUsers.toString(), color: "text-info" },
+            ].map((stat, index) => (
+              <Card key={index} className="text-center border-primary/10">
+                <CardContent className="pt-6">
+                  <stat.icon className={`w-8 h-8 mx-auto mb-2 ${stat.color}`} />
+                  <div className="text-2xl font-bold">{stat.value}</div>
+                  <div className="text-sm text-muted-foreground">{stat.label}</div>
+                </CardContent>
+              </Card>
+            ));
+          })()}
         </div>
       </div>
     </div>

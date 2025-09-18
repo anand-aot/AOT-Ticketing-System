@@ -33,7 +33,7 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const { toast } = useToast();
 
-  const categories = ["IT Infrastructure", "HR", "Admin", "Accounts", "Others"];
+  const categories = ["IT Infrastructure", "HR", "Administration", "Accounts", "Others"];
 
   useEffect(() => {
     loadTickets();
@@ -112,19 +112,19 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
     switch (category) {
       case "IT Infrastructure": return <Zap className="w-5 h-5" />;
       case "HR": return <Users className="w-5 h-5" />;
-      case "Admin": return <Building className="w-5 h-5" />;
+      case "Administration": return <Building className="w-5 h-5" />;
       case "Accounts": return <DollarSign className="w-5 h-5" />;
       default: return <FileText className="w-5 h-5" />;
     }
   };
 
   const handleExportReport = () => {
-    const csv = storageService.exportTicketsToCSV();
+    const csv = storageService.exportTicketsToCSV(user.role);
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `all-tickets-report-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `${user.role === 'owner' ? 'all' : user.role.replace('_owner', '')}-tickets-report-${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(a);
     a.click();
     window.URL.revokeObjectURL(url);
@@ -132,7 +132,7 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
     
     toast({
       title: "Report Generated", 
-      description: "Complete ticket analytics report has been exported",
+      description: `${user.role === 'owner' ? 'Complete' : 'Category'} ticket analytics report has been exported`,
     });
   };
 

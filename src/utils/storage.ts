@@ -3,7 +3,7 @@ export interface Ticket {
   id: string;
   subject: string;
   description: string;
-  category: "IT Infrastructure" | "HR" | "Admin" | "Accounts" | "Others";
+  category: "IT Infrastructure" | "HR" | "Administration" | "Accounts" | "Others";
   priority: "Low" | "Medium" | "High" | "Critical";
   status: "Open" | "In Progress" | "Escalated" | "Closed";
   createdAt: string;
@@ -53,7 +53,7 @@ export interface Notification {
 const ROLE_CATEGORIES: Record<string, string> = {
   'it_owner': 'IT Infrastructure',
   'hr_owner': 'HR',
-  'admin_owner': 'Admin',
+  'admin_owner': 'Administration',
   'accounts_owner': 'Accounts'
 };
 
@@ -244,9 +244,18 @@ class StorageService {
     }
   }
 
-  // Export functionality
-  exportTicketsToCSV(): string {
-    const tickets = this.getTickets();
+  // Export functionality - role-based
+  exportTicketsToCSV(userRole?: string, userCategory?: string): string {
+    let tickets = this.getTickets();
+    
+    // Filter tickets based on user role
+    if (userRole && userRole !== 'owner') {
+      const category = getCategoryForRole(userRole);
+      if (category) {
+        tickets = tickets.filter(ticket => ticket.category === category);
+      }
+    }
+    
     const headers = [
       'ID', 'Subject', 'Category', 'Priority', 'Status', 
       'Employee', 'Created Date', 'Response Time (hrs)', 'Resolution Time (hrs)', 'Rating'

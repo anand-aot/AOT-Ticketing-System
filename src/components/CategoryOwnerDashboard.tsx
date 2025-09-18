@@ -145,7 +145,7 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
   };
 
   const handleExportTickets = () => {
-    const csv = storageService.exportTicketsToCSV();
+    const csv = storageService.exportTicketsToCSV(user.role);
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -436,7 +436,7 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                             <SelectContent>
                               <SelectItem value="IT Infrastructure">IT Infrastructure</SelectItem>
                               <SelectItem value="HR">HR</SelectItem>
-                              <SelectItem value="Admin">Admin</SelectItem>
+                              <SelectItem value="Administration">Administration</SelectItem>
                               <SelectItem value="Accounts">Accounts</SelectItem>
                               <SelectItem value="Others">Others</SelectItem>
                             </SelectContent>

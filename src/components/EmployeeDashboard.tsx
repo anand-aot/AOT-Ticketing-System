@@ -120,23 +120,6 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
     setIsChatOpen(true);
   };
 
-  const handleExportTickets = () => {
-    const csv = storageService.exportTicketsToCSV();
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `my-tickets-${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
-    
-    toast({
-      title: "Export Successful",
-      description: "Your tickets have been exported to CSV",
-    });
-  };
 
   const renderRating = (ticket: Ticket) => {
     if (ticket.status !== "Closed") return null;
@@ -196,10 +179,6 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
             </div>
             <div className="flex items-center gap-3">
               <NotificationSystem user={user} />
-              <Button variant="outline" onClick={handleExportTickets} className="gap-2">
-                <Download className="w-4 h-4" />
-                Export
-              </Button>
               <Button variant="outline" onClick={onLogout} className="gap-2">
                 <LogOut className="w-4 h-4" />
                 Sign Out
@@ -368,7 +347,7 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
             <CardHeader>
               <CardTitle>Create New Ticket</CardTitle>
               <CardDescription>
-                Submit a new support request for IT, HR, Admin, or Accounts assistance
+                Submit a new support request for IT, HR, Administration, or Accounts assistance
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -383,7 +362,7 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
                       <SelectContent>
                         <SelectItem value="IT Infrastructure">IT Infrastructure</SelectItem>
                         <SelectItem value="HR">HR</SelectItem>
-                        <SelectItem value="Admin">Admin</SelectItem>
+                        <SelectItem value="Administration">Administration</SelectItem>
                         <SelectItem value="Accounts">Accounts</SelectItem>
                         <SelectItem value="Others">Others</SelectItem>
                       </SelectContent>
