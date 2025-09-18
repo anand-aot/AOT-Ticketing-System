@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,98 +8,41 @@ import { Progress } from "@/components/ui/progress";
 import { 
   Users, LogOut, MessageSquare, Clock, TrendingUp, 
   AlertTriangle, CheckCircle, Filter, Search, Star,
-  BarChart3, Timer, Target
+  BarChart3, Timer, Target, Download
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-
-interface User {
-  email: string;
-  role: string;
-  name: string;
-}
-
-interface Ticket {
-  id: string;
-  subject: string;
-  description: string;
-  category: string;
-  priority: "Low" | "Medium" | "High" | "Critical";
-  status: "Open" | "In Progress" | "Escalated" | "Closed";
-  createdAt: string;
-  assignedTo?: string;
-  employeeName: string;
-  rating?: number;
-  responseTime?: number; // hours
-  resolutionTime?: number; // hours
-}
+import { storageService, getCategoryForRole, type Ticket, type User } from "@/utils/storage";
+import ChatModal from "./ChatModal";
+import NotificationSystem from "./NotificationSystem";
 
 interface CategoryOwnerDashboardProps {
   user: User;
   onLogout: () => void;
 }
 
-const mockTickets: Ticket[] = [
-  {
-    id: "TKT-001",
-    subject: "Server Performance Issue",
-    description: "Database queries running slowly",
-    category: "IT Infrastructure",
-    priority: "High",
-    status: "In Progress",
-    createdAt: "2024-01-15",
-    employeeName: "John Doe",
-    responseTime: 2,
-  },
-  {
-    id: "TKT-004",
-    subject: "Network Connectivity Problem",
-    description: "Unable to connect to VPN",
-    category: "IT Infrastructure", 
-    priority: "Critical",
-    status: "Open",
-    createdAt: "2024-01-16",
-    employeeName: "Jane Smith",
-  },
-  {
-    id: "TKT-007",
-    subject: "Software License Renewal",
-    description: "Adobe license expiring soon",
-    category: "IT Infrastructure",
-    priority: "Medium",
-    status: "Closed",
-    createdAt: "2024-01-10",
-    employeeName: "Mike Johnson",
-    rating: 4,
-    responseTime: 1,
-    resolutionTime: 24,
-  },
-  {
-    id: "TKT-012",
-    subject: "Email Configuration",
-    description: "Setup new employee email account",
-    category: "IT Infrastructure",
-    priority: "Low",
-    status: "Escalated",
-    createdAt: "2024-01-12",
-    employeeName: "Sarah Wilson",
-    responseTime: 4,
-  },
-];
-
 const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps) => {
   const [activeTab, setActiveTab] = useState<"dashboard" | "tickets" | "analytics">("dashboard");
-  const [tickets, setTickets] = useState<Ticket[]>(mockTickets);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const { toast } = useToast();
 
-  const category = "IT Infrastructure"; // Would be determined by user role/email
+  const category = getCategoryForRole(user.role) || "Others";
 
-  const categoryTickets = tickets.filter(ticket => ticket.category === category);
+  useEffect(() => {
+    loadTickets();
+  }, [category]);
+
+  const loadTickets = () => {
+    const categoryTickets = storageService.getTicketsByCategory(category);
+    setTickets(categoryTickets);
+  };
   
-  const filteredTickets = categoryTickets.filter(ticket => {
+  const filteredTickets = tickets.filter(ticket => {
     const matchesStatus = filterStatus === "all" || ticket.status.toLowerCase() === filterStatus;
     const matchesPriority = filterPriority === "all" || ticket.priority.toLowerCase() === filterPriority;
     const matchesSearch = ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -108,23 +51,23 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
   });
 
   // Analytics calculations
-  const totalTickets = categoryTickets.length;
-  const openTickets = categoryTickets.filter(t => t.status === "Open").length;
-  const inProgressTickets = categoryTickets.filter(t => t.status === "In Progress").length;
-  const escalatedTickets = categoryTickets.filter(t => t.status === "Escalated").length;
-  const closedTickets = categoryTickets.filter(t => t.status === "Closed").length;
+  const totalTickets = tickets.length;
+  const openTickets = tickets.filter(t => t.status === "Open").length;
+  const inProgressTickets = tickets.filter(t => t.status === "In Progress").length;
+  const escalatedTickets = tickets.filter(t => t.status === "Escalated").length;
+  const closedTickets = tickets.filter(t => t.status === "Closed").length;
   
-  const ticketsWithRating = categoryTickets.filter(t => t.rating);
+  const ticketsWithRating = tickets.filter(t => t.rating);
   const avgRating = ticketsWithRating.length > 0 
     ? ticketsWithRating.reduce((sum, t) => sum + (t.rating || 0), 0) / ticketsWithRating.length
     : 0;
 
-  const ticketsWithResponseTime = categoryTickets.filter(t => t.responseTime);
+  const ticketsWithResponseTime = tickets.filter(t => t.responseTime);
   const avgResponseTime = ticketsWithResponseTime.length > 0
     ? ticketsWithResponseTime.reduce((sum, t) => sum + (t.responseTime || 0), 0) / ticketsWithResponseTime.length
     : 0;
 
-  const ticketsWithResolutionTime = categoryTickets.filter(t => t.resolutionTime);
+  const ticketsWithResolutionTime = tickets.filter(t => t.resolutionTime);
   const avgResolutionTime = ticketsWithResolutionTime.length > 0
     ? ticketsWithResolutionTime.reduce((sum, t) => sum + (t.resolutionTime || 0), 0) / ticketsWithResolutionTime.length
     : 0;
@@ -150,13 +93,72 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
   };
 
   const handleStatusChange = (ticketId: string, newStatus: Ticket["status"]) => {
-    setTickets(tickets.map(ticket => 
-      ticket.id === ticketId ? { ...ticket, status: newStatus } : ticket
-    ));
+    storageService.updateTicket(ticketId, { status: newStatus });
+    loadTickets();
     
     toast({
       title: "Status Updated",
       description: `Ticket ${ticketId} status changed to ${newStatus}`,
+    });
+  };
+
+  const handlePriorityChange = (ticketId: string, newPriority: Ticket["priority"]) => {
+    storageService.updateTicket(ticketId, { priority: newPriority });
+    loadTickets();
+    
+    toast({
+      title: "Priority Updated",
+      description: `Ticket ${ticketId} priority changed to ${newPriority}`,
+    });
+  };
+
+  const handleCategoryChange = (ticketId: string, newCategory: Ticket["category"]) => {
+    storageService.updateTicket(ticketId, { category: newCategory });
+    loadTickets();
+    
+    toast({
+      title: "Category Updated",
+      description: `Ticket ${ticketId} moved to ${newCategory} category`,
+    });
+  };
+
+  const handleEscalateTicket = (ticketId: string) => {
+    const reason = prompt("Please provide an escalation reason:");
+    if (reason) {
+      storageService.updateTicket(ticketId, { 
+        status: "Escalated",
+        escalationReason: reason,
+        escalationDate: new Date().toISOString()
+      });
+      loadTickets();
+      
+      toast({
+        title: "Ticket Escalated",
+        description: `Ticket ${ticketId} has been escalated`,
+      });
+    }
+  };
+
+  const handleOpenChat = (ticket: Ticket) => {
+    setSelectedTicket(ticket);
+    setIsChatOpen(true);
+  };
+
+  const handleExportTickets = () => {
+    const csv = storageService.exportTicketsToCSV();
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${category.toLowerCase().replace(' ', '-')}-tickets-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    
+    toast({
+      title: "Export Successful",
+      description: `${category} tickets exported to CSV`,
     });
   };
 
@@ -190,10 +192,17 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                 <p className="text-sm text-muted-foreground">Category Owner - {category}</p>
               </div>
             </div>
-            <Button variant="outline" onClick={onLogout} className="gap-2">
-              <LogOut className="w-4 h-4" />
-              Sign Out
-            </Button>
+            <div className="flex items-center gap-3">
+              <NotificationSystem user={user} />
+              <Button variant="outline" onClick={handleExportTickets} className="gap-2">
+                <Download className="w-4 h-4" />
+                Export
+              </Button>
+              <Button variant="outline" onClick={onLogout} className="gap-2">
+                <LogOut className="w-4 h-4" />
+                Sign Out
+              </Button>
+            </div>
           </div>
         </div>
       </header>
@@ -215,7 +224,7 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
             className="gap-2"
           >
             <MessageSquare className="w-4 h-4" />
-            Tickets ({categoryTickets.length})
+            Tickets ({totalTickets})
           </Button>
           <Button
             variant={activeTab === "analytics" ? "default" : "outline"}
@@ -375,7 +384,7 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                           <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                             <span className="flex items-center gap-1">
                               <Clock className="w-4 h-4" />
-                              {ticket.createdAt}
+                              {new Date(ticket.createdAt).toLocaleDateString()}
                             </span>
                             <span>Employee: {ticket.employeeName}</span>
                             {ticket.responseTime && (
@@ -384,25 +393,75 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                           </div>
                         </div>
                         
-                        <div className="flex flex-col gap-3">
+                        <div className="flex flex-col gap-3 lg:w-64">
+                          <div className="grid grid-cols-2 gap-2">
+                            <Select 
+                              value={ticket.status} 
+                              onValueChange={(value: Ticket["status"]) => handleStatusChange(ticket.id, value)}
+                            >
+                              <SelectTrigger className="text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Open">Open</SelectItem>
+                                <SelectItem value="In Progress">In Progress</SelectItem>
+                                <SelectItem value="Escalated">Escalated</SelectItem>
+                                <SelectItem value="Closed">Closed</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            
+                            <Select 
+                              value={ticket.priority} 
+                              onValueChange={(value: Ticket["priority"]) => handlePriorityChange(ticket.id, value)}
+                            >
+                              <SelectTrigger className="text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Low">Low</SelectItem>
+                                <SelectItem value="Medium">Medium</SelectItem>
+                                <SelectItem value="High">High</SelectItem>
+                                <SelectItem value="Critical">Critical</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          
                           <Select 
-                            value={ticket.status} 
-                            onValueChange={(value: Ticket["status"]) => handleStatusChange(ticket.id, value)}
+                            value={ticket.category} 
+                            onValueChange={(value: Ticket["category"]) => handleCategoryChange(ticket.id, value)}
                           >
-                            <SelectTrigger className="w-full lg:w-48">
+                            <SelectTrigger className="text-xs">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="Open">Open</SelectItem>
-                              <SelectItem value="In Progress">In Progress</SelectItem>
-                              <SelectItem value="Escalated">Escalated</SelectItem>
-                              <SelectItem value="Closed">Closed</SelectItem>
+                              <SelectItem value="IT Infrastructure">IT Infrastructure</SelectItem>
+                              <SelectItem value="HR">HR</SelectItem>
+                              <SelectItem value="Admin">Admin</SelectItem>
+                              <SelectItem value="Accounts">Accounts</SelectItem>
+                              <SelectItem value="Others">Others</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Button variant="outline" size="sm" className="gap-2">
-                            <MessageSquare className="w-4 h-4" />
-                            Chat
-                          </Button>
+                          
+                          <div className="flex gap-2">
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="gap-2 flex-1"
+                              onClick={() => handleOpenChat(ticket)}
+                            >
+                              <MessageSquare className="w-4 h-4" />
+                              Chat
+                            </Button>
+                            {ticket.status !== "Escalated" && (
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                onClick={() => handleEscalateTicket(ticket.id)}
+                              >
+                                <AlertTriangle className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
                       
@@ -426,12 +485,12 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
               <Card>
                 <CardHeader className="pb-4">
                   <CardTitle className="flex items-center gap-2">
-                    <Timer className="w-5 h-5 text-primary" />
+                    <Timer className="w-5 h-5" />
                     Avg Response Time
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold mb-2">
+                  <div className="text-3xl font-bold text-primary">
                     {avgResponseTime.toFixed(1)}h
                   </div>
                   <p className="text-sm text-muted-foreground">
@@ -443,12 +502,12 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
               <Card>
                 <CardHeader className="pb-4">
                   <CardTitle className="flex items-center gap-2">
-                    <Target className="w-5 h-5 text-success" />
+                    <CheckCircle className="w-5 h-5" />
                     Avg Resolution Time
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold mb-2">
+                  <div className="text-3xl font-bold text-success">
                     {avgResolutionTime.toFixed(1)}h
                   </div>
                   <p className="text-sm text-muted-foreground">
@@ -460,21 +519,13 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
               <Card>
                 <CardHeader className="pb-4">
                   <CardTitle className="flex items-center gap-2">
-                    <Star className="w-5 h-5 text-warning" />
+                    <Star className="w-5 h-5" />
                     Customer Satisfaction
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold mb-2">
+                  <div className="text-3xl font-bold text-warning">
                     {avgRating.toFixed(1)}/5
-                  </div>
-                  <div className="flex items-center gap-1 mb-2">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <Star
-                        key={star}
-                        className={cn("w-4 h-4", star <= Math.round(avgRating) ? "fill-warning text-warning" : "text-muted-foreground")}
-                      />
-                    ))}
                   </div>
                   <p className="text-sm text-muted-foreground">
                     Based on {ticketsWithRating.length} ratings
@@ -482,43 +533,20 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                 </CardContent>
               </Card>
             </div>
-
-            {/* Performance Trends */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Performance Metrics</CardTitle>
-                <CardDescription>
-                  Track your team's performance across key metrics
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div>
-                    <h4 className="font-medium mb-4">Resolution Rate</h4>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Resolved within SLA</span>
-                        <span className="font-medium">85%</span>
-                      </div>
-                      <Progress value={85} className="h-2" />
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="font-medium mb-4">First Response Rate</h4>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Within 4 hours</span>
-                        <span className="font-medium">92%</span>
-                      </div>
-                      <Progress value={92} className="h-2" />
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
           </div>
         )}
       </div>
+
+      <ChatModal
+        ticket={selectedTicket}
+        user={user}
+        isOpen={isChatOpen}
+        onClose={() => {
+          setIsChatOpen(false);
+          setSelectedTicket(null);
+          loadTickets();
+        }}
+      />
     </div>
   );
 };

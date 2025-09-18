@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,124 +14,35 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-
-interface User {
-  email: string;
-  role: string;
-  name: string;
-}
-
-interface Ticket {
-  id: string;
-  subject: string;
-  description: string;
-  category: string;
-  priority: "Low" | "Medium" | "High" | "Critical";
-  status: "Open" | "In Progress" | "Escalated" | "Closed";
-  createdAt: string;
-  employeeName: string;
-  assignedTo?: string;
-  rating?: number;
-  responseTime?: number;
-  resolutionTime?: number;
-}
+import { storageService, canAccessAllTickets, type Ticket, type User } from "@/utils/storage";
+import ChatModal from "./ChatModal";
+import NotificationSystem from "./NotificationSystem";
 
 interface HRAdminDashboardProps {
   user: User;
   onLogout: () => void;
 }
 
-const mockTickets: Ticket[] = [
-  // IT Infrastructure
-  {
-    id: "TKT-001",
-    subject: "Server Performance Issue",
-    description: "Database queries running slowly",
-    category: "IT Infrastructure",
-    priority: "High",
-    status: "In Progress",
-    createdAt: "2024-01-15",
-    employeeName: "John Doe",
-    assignedTo: "IT Team",
-    responseTime: 2,
-  },
-  {
-    id: "TKT-004",
-    subject: "Network Connectivity Problem", 
-    description: "Unable to connect to VPN",
-    category: "IT Infrastructure",
-    priority: "Critical", 
-    status: "Escalated",
-    createdAt: "2024-01-16",
-    employeeName: "Jane Smith",
-    assignedTo: "IT Team",
-    responseTime: 1,
-  },
-  // HR
-  {
-    id: "TKT-002",
-    subject: "Leave Application Issue",
-    description: "Unable to submit leave application",
-    category: "HR",
-    priority: "Medium",
-    status: "Closed",
-    createdAt: "2024-01-14",
-    employeeName: "Mike Johnson",
-    assignedTo: "HR Team",
-    rating: 5,
-    responseTime: 3,
-    resolutionTime: 8,
-  },
-  {
-    id: "TKT-008",
-    subject: "Payroll Inquiry",
-    description: "Questions about overtime calculation",
-    category: "HR",
-    priority: "Low",
-    status: "Open",
-    createdAt: "2024-01-17",
-    employeeName: "Sarah Wilson",
-    assignedTo: "HR Team",
-  },
-  // Admin
-  {
-    id: "TKT-005",
-    subject: "Office Space Request",
-    description: "Need additional workspace for new hire",
-    category: "Admin",
-    priority: "Medium",
-    status: "In Progress",
-    createdAt: "2024-01-13",
-    employeeName: "Robert Chen",
-    assignedTo: "Admin Team",
-    responseTime: 4,
-  },
-  // Accounts
-  {
-    id: "TKT-003",
-    subject: "Invoice Processing",
-    description: "Vendor invoice requires approval",
-    category: "Accounts",
-    priority: "High",
-    status: "Closed",
-    createdAt: "2024-01-12",
-    employeeName: "Lisa Anderson",
-    assignedTo: "Accounts Team",
-    rating: 4,
-    responseTime: 2,
-    resolutionTime: 12,
-  },
-];
-
 const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
   const [activeTab, setActiveTab] = useState("overview");
-  const [tickets] = useState<Ticket[]>(mockTickets);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const { toast } = useToast();
 
   const categories = ["IT Infrastructure", "HR", "Admin", "Accounts", "Others"];
+
+  useEffect(() => {
+    loadTickets();
+  }, []);
+
+  const loadTickets = () => {
+    const allTickets = storageService.getTickets();
+    setTickets(allTickets);
+  };
   
   const filteredTickets = tickets.filter(ticket => {
     const matchesCategory = filterCategory === "all" || ticket.category === filterCategory;
@@ -207,6 +118,39 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
     }
   };
 
+  const handleExportReport = () => {
+    const csv = storageService.exportTicketsToCSV();
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `all-tickets-report-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    
+    toast({
+      title: "Report Generated", 
+      description: "Complete ticket analytics report has been exported",
+    });
+  };
+
+  const handleOpenChat = (ticket: Ticket) => {
+    setSelectedTicket(ticket);
+    setIsChatOpen(true);
+  };
+
+  const handleStatusChange = (ticketId: string, newStatus: Ticket["status"]) => {
+    storageService.updateTicket(ticketId, { status: newStatus });
+    loadTickets();
+    
+    toast({
+      title: "Status Updated",
+      description: `Ticket ${ticketId} status changed to ${newStatus}`,
+    });
+  };
+
   const renderRating = (rating?: number) => {
     if (!rating) return <span className="text-muted-foreground text-sm">Not rated</span>;
     return (
@@ -222,13 +166,6 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
     );
   };
 
-  const handleExportReport = () => {
-    toast({
-      title: "Report Generated", 
-      description: "Ticket analytics report has been exported successfully",
-    });
-  };
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -241,10 +178,11 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
               </div>
               <div>
                 <h1 className="text-xl font-bold">Welcome, {user.name}</h1>
-                <p className="text-sm text-muted-foreground">HR Administrator - System Overview</p>
+                <p className="text-sm text-muted-foreground">System Administrator - Full Access</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <NotificationSystem user={user} />
               <Button variant="outline" onClick={handleExportReport} className="gap-2">
                 <Download className="w-4 h-4" />
                 Export Report
@@ -271,7 +209,7 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
             </TabsTrigger>
             <TabsTrigger value="tickets" className="gap-2">
               <MessageSquare className="w-4 h-4" />
-              All Tickets
+              All Tickets ({totalTickets})
             </TabsTrigger>
             <TabsTrigger value="analytics" className="gap-2">
               <TrendingUp className="w-4 h-4" />
@@ -286,14 +224,13 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground">Total Tickets</p>
+                      <p className="text-sm font-medium text-muted-foreground">Total</p>
                       <p className="text-2xl font-bold">{totalTickets}</p>
                     </div>
                     <MessageSquare className="w-8 h-8 text-primary" />
                   </div>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
@@ -305,7 +242,6 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                   </div>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
@@ -317,7 +253,6 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                   </div>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
@@ -329,7 +264,6 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                   </div>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
@@ -343,7 +277,7 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
               </Card>
             </div>
 
-            {/* System Health Overview */}
+            {/* Category Performance */}
             <div className="grid lg:grid-cols-2 gap-6">
               <Card>
                 <CardHeader>
@@ -353,13 +287,10 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span>Resolution Rate</span>
-                      <span className="font-medium">
-                        {((closedTickets / totalTickets) * 100).toFixed(1)}%
-                      </span>
+                      <span className="font-medium">{((closedTickets / totalTickets) * 100 || 0).toFixed(1)}%</span>
                     </div>
-                    <Progress value={(closedTickets / totalTickets) * 100} className="h-2" />
+                    <Progress value={(closedTickets / totalTickets) * 100 || 0} className="h-2" />
                   </div>
-                  
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span>Customer Satisfaction</span>
@@ -367,7 +298,6 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                     </div>
                     <Progress value={(overallCSAT / 5) * 100} className="h-2" />
                   </div>
-                  
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span>Avg Response Time</span>
@@ -377,30 +307,25 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                   </div>
                 </CardContent>
               </Card>
-
+              
               <Card>
                 <CardHeader>
-                  <CardTitle>Priority Distribution</CardTitle>
+                  <CardTitle>Categories Overview</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    {["Critical", "High", "Medium", "Low"].map((priority) => {
-                      const count = tickets.filter(t => t.priority === priority).length;
-                      const percentage = totalTickets > 0 ? (count / totalTickets) * 100 : 0;
-                      return (
-                        <div key={priority} className="space-y-2">
-                          <div className="flex justify-between text-sm">
-                            <span className="flex items-center gap-2">
-                              <Badge className={getPriorityColor(priority)}>
-                                {priority}
-                              </Badge>
-                            </span>
-                            <span className="font-medium">{count} ({percentage.toFixed(1)}%)</span>
-                          </div>
-                          <Progress value={percentage} className="h-2" />
+                  <div className="space-y-3">
+                    {categoryStats.map(stat => (
+                      <div key={stat.category} className="flex justify-between items-center p-3 bg-muted rounded-lg">
+                        <div className="flex items-center gap-3">
+                          {getCategoryIcon(stat.category)}
+                          <span className="font-medium">{stat.category}</span>
                         </div>
-                      );
-                    })}
+                        <div className="text-right text-sm">
+                          <div className="font-semibold">{stat.total} tickets</div>
+                          <div className="text-muted-foreground">{stat.resolutionRate.toFixed(1)}% resolved</div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>
@@ -408,50 +333,42 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
           </TabsContent>
 
           <TabsContent value="categories" className="space-y-6 mt-6">
-            <div className="grid gap-4">
-              {categoryStats.map((stat) => (
-                <Card key={stat.category} className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-                          {getCategoryIcon(stat.category)}
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-lg">{stat.category}</h3>
-                          <p className="text-sm text-muted-foreground">
-                            {stat.total} total tickets
-                          </p>
-                        </div>
+            <div className="grid lg:grid-cols-2 xl:grid-cols-3 gap-6">
+              {categoryStats.map(stat => (
+                <Card key={stat.category}>
+                  <CardHeader className="pb-4">
+                    <CardTitle className="flex items-center gap-2">
+                      {getCategoryIcon(stat.category)}
+                      {stat.category}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-primary">{stat.total}</div>
+                        <div className="text-sm text-muted-foreground">Total</div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold">
-                          {stat.resolutionRate.toFixed(1)}%
-                        </div>
-                        <p className="text-sm text-muted-foreground">Resolution Rate</p>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-success">{stat.closed}</div>
+                        <div className="text-sm text-muted-foreground">Resolved</div>
                       </div>
                     </div>
-                    
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="text-center">
-                        <div className="text-lg font-semibold text-success">{stat.closed}</div>
-                        <p className="text-xs text-muted-foreground">Resolved</p>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span>Resolution Rate</span>
+                        <span className="font-medium">{stat.resolutionRate.toFixed(1)}%</span>
                       </div>
-                      <div className="text-center">
-                        <div className="text-lg font-semibold text-warning">{stat.open}</div>
-                        <p className="text-xs text-muted-foreground">Active</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-lg font-semibold">
-                          {stat.avgRating > 0 ? stat.avgRating.toFixed(1) : "N/A"}
-                        </div>
-                        <p className="text-xs text-muted-foreground">Avg Rating</p>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-4">
                       <Progress value={stat.resolutionRate} className="h-2" />
                     </div>
+                    {stat.avgRating > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm">Avg Rating</span>
+                        <div className="flex items-center gap-1">
+                          <Star className="w-4 h-4 fill-warning text-warning" />
+                          <span className="text-sm font-medium">{stat.avgRating.toFixed(1)}</span>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ))}
@@ -464,7 +381,7 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search tickets or employees..."
+                  placeholder="Search tickets or employee names..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
@@ -472,7 +389,7 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
               </div>
               <Select value={filterCategory} onValueChange={setFilterCategory}>
                 <SelectTrigger className="w-full lg:w-48">
-                  <Target className="w-4 h-4 mr-2" />
+                  <Filter className="w-4 h-4 mr-2" />
                   <SelectValue placeholder="Category" />
                 </SelectTrigger>
                 <SelectContent>
@@ -484,7 +401,7 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
               </Select>
               <Select value={filterStatus} onValueChange={setFilterStatus}>
                 <SelectTrigger className="w-full lg:w-48">
-                  <Filter className="w-4 h-4 mr-2" />
+                  <AlertTriangle className="w-4 h-4 mr-2" />
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
@@ -497,155 +414,221 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
               </Select>
             </div>
 
-            {/* Tickets Table */}
+            {/* Tickets List */}
             <div className="grid gap-4">
-              {filteredTickets.map((ticket) => (
-                <Card key={ticket.id} className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-6">
-                    <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <Badge variant="outline" className="font-mono">
-                            {ticket.id}
-                          </Badge>
-                          <Badge className={getPriorityColor(ticket.priority)}>
-                            {ticket.priority}
-                          </Badge>
-                          <Badge className={getStatusColor(ticket.status)}>
-                            {ticket.status}
-                          </Badge>
-                          <Badge variant="outline">
-                            {ticket.category}
-                          </Badge>
+              {filteredTickets.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center">
+                    <MessageSquare className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                    <h3 className="text-lg font-medium mb-2">No tickets found</h3>
+                    <p className="text-muted-foreground">
+                      {searchQuery || filterCategory !== "all" || filterStatus !== "all" 
+                        ? "Try adjusting your search or filters"
+                        : "No tickets have been created yet"
+                      }
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                filteredTickets.map((ticket) => (
+                  <Card key={ticket.id} className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-6">
+                      <div className="space-y-4">
+                        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <Badge variant="outline" className="font-mono">
+                                {ticket.id}
+                              </Badge>
+                              <Badge className={getPriorityColor(ticket.priority)}>
+                                {ticket.priority}
+                              </Badge>
+                              <Badge className={getStatusColor(ticket.status)}>
+                                {ticket.status}
+                              </Badge>
+                              <Badge variant="outline">
+                                {ticket.category}
+                              </Badge>
+                            </div>
+                            <h3 className="font-semibold text-lg mb-2">{ticket.subject}</h3>
+                            <p className="text-muted-foreground mb-2">{ticket.description}</p>
+                            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-4 h-4" />
+                                {new Date(ticket.createdAt).toLocaleDateString()}
+                              </span>
+                              <span>Employee: {ticket.employeeName}</span>
+                              {ticket.responseTime && (
+                                <span>Response: {ticket.responseTime}h</span>
+                              )}
+                              {ticket.resolutionTime && (
+                                <span>Resolution: {ticket.resolutionTime}h</span>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col gap-3 lg:w-64">
+                            <Select 
+                              value={ticket.status} 
+                              onValueChange={(value: Ticket["status"]) => handleStatusChange(ticket.id, value)}
+                            >
+                              <SelectTrigger className="text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Open">Open</SelectItem>
+                                <SelectItem value="In Progress">In Progress</SelectItem>
+                                <SelectItem value="Escalated">Escalated</SelectItem>
+                                <SelectItem value="Closed">Closed</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="gap-2"
+                              onClick={() => handleOpenChat(ticket)}
+                            >
+                              <MessageSquare className="w-4 h-4" />
+                              Chat {ticket.messages.length > 0 && `(${ticket.messages.length})`}
+                            </Button>
+                          </div>
                         </div>
-                        <h3 className="font-semibold text-lg mb-2">{ticket.subject}</h3>
-                        <p className="text-muted-foreground mb-2">{ticket.description}</p>
-                        <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-4 h-4" />
-                            {ticket.createdAt}
-                          </span>
-                          <span>Employee: {ticket.employeeName}</span>
-                          <span>Assigned: {ticket.assignedTo || "Unassigned"}</span>
-                          {ticket.responseTime && (
-                            <span>Response: {ticket.responseTime}h</span>
-                          )}
-                        </div>
+                        
                         {ticket.rating && (
-                          <div className="mt-2">
+                          <div className="pt-2 border-t">
+                            <span className="text-sm text-muted-foreground mr-2">Customer Rating:</span>
                             {renderRating(ticket.rating)}
                           </div>
                         )}
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                ))
+              )}
             </div>
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6 mt-6">
-            {/* Advanced Analytics */}
             <div className="grid lg:grid-cols-3 gap-6">
               <Card>
-                <CardHeader>
+                <CardHeader className="pb-4">
                   <CardTitle className="flex items-center gap-2">
-                    <Target className="w-5 h-5 text-success" />
-                    SLA Compliance
+                    <Timer className="w-5 h-5" />
+                    Avg Response Time
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold mb-2">87%</div>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Tickets resolved within SLA
-                  </p>
-                  <Progress value={87} className="h-2" />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Timer className="w-5 h-5 text-primary" />
-                    Escalation Rate
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold mb-2">
-                    {((escalatedTickets / totalTickets) * 100).toFixed(1)}%
+                  <div className="text-3xl font-bold text-primary">
+                    {avgResponseTime.toFixed(1)}h
                   </div>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Tickets requiring escalation
+                  <p className="text-sm text-muted-foreground">
+                    Based on {ticketsWithResponseTime.length} tickets
                   </p>
-                  <Progress value={(escalatedTickets / totalTickets) * 100} className="h-2" />
+                  <div className="mt-4">
+                    <div className="text-xs text-muted-foreground mb-1">Target: &lt;4h</div>
+                    <Progress value={Math.min((4 - avgResponseTime) / 4 * 100, 100)} className="h-2" />
+                  </div>
                 </CardContent>
               </Card>
 
               <Card>
-                <CardHeader>
+                <CardHeader className="pb-4">
                   <CardTitle className="flex items-center gap-2">
-                    <Users className="w-5 h-5 text-info" />
-                    Team Efficiency
+                    <CheckCircle className="w-5 h-5" />
+                    Resolution Rate
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold mb-2">94%</div>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Overall team performance
+                  <div className="text-3xl font-bold text-success">
+                    {((closedTickets / totalTickets) * 100 || 0).toFixed(1)}%
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {closedTickets} of {totalTickets} tickets resolved
                   </p>
-                  <Progress value={94} className="h-2" />
+                  <div className="mt-4">
+                    <div className="text-xs text-muted-foreground mb-1">Target: &gt;85%</div>
+                    <Progress value={(closedTickets / totalTickets) * 100 || 0} className="h-2" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-4">
+                  <CardTitle className="flex items-center gap-2">
+                    <Star className="w-5 h-5" />
+                    Customer Satisfaction
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-warning">
+                    {overallCSAT.toFixed(1)}/5
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Based on {ticketsWithRating.length} ratings
+                  </p>
+                  <div className="mt-4">
+                    <div className="text-xs text-muted-foreground mb-1">Target: &gt;4.0</div>
+                    <Progress value={(overallCSAT / 5) * 100} className="h-2" />
+                  </div>
                 </CardContent>
               </Card>
             </div>
 
-            {/* Detailed Metrics */}
-            <div className="grid lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Category Performance Comparison</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {categoryStats.map((stat) => (
-                      <div key={stat.category}>
-                        <div className="flex justify-between items-center mb-2">
+            {/* Category Performance Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Category Performance Comparison</CardTitle>
+                <CardDescription>Resolution rates and customer satisfaction by category</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-6">
+                  {categoryStats.map(stat => (
+                    <div key={stat.category} className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {getCategoryIcon(stat.category)}
                           <span className="font-medium">{stat.category}</span>
-                          <span className="text-sm text-muted-foreground">
-                            {stat.resolutionRate.toFixed(1)}%
-                          </span>
                         </div>
-                        <Progress value={stat.resolutionRate} className="h-2" />
+                        <div className="text-sm text-muted-foreground">
+                          {stat.total} tickets • {stat.resolutionRate.toFixed(1)}% resolved
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Monthly Trends</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-sm text-muted-foreground">This Month</p>
-                        <p className="text-2xl font-bold">{totalTickets}</p>
-                        <p className="text-xs text-success">↑ 12% from last month</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Resolution Time</p>
-                        <p className="text-2xl font-bold">{avgResponseTime.toFixed(1)}h</p>
-                        <p className="text-xs text-success">↓ 8% improvement</p>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <div className="flex justify-between text-xs mb-1">
+                            <span>Resolution Rate</span>
+                            <span>{stat.resolutionRate.toFixed(1)}%</span>
+                          </div>
+                          <Progress value={stat.resolutionRate} className="h-2" />
+                        </div>
+                        <div>
+                          <div className="flex justify-between text-xs mb-1">
+                            <span>Avg Rating</span>
+                            <span>{stat.avgRating > 0 ? `${stat.avgRating.toFixed(1)}/5` : 'N/A'}</span>
+                          </div>
+                          <Progress value={stat.avgRating > 0 ? (stat.avgRating / 5) * 100 : 0} className="h-2" />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
+
+      <ChatModal
+        ticket={selectedTicket}
+        user={user}
+        isOpen={isChatOpen}
+        onClose={() => {
+          setIsChatOpen(false);
+          setSelectedTicket(null);
+          loadTickets();
+        }}
+      />
     </div>
   );
 };

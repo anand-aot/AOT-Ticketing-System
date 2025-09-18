@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,14 +10,21 @@ import EmployeeDashboard from "@/components/EmployeeDashboard";
 import CategoryOwnerDashboard from "@/components/CategoryOwnerDashboard";
 import HRAdminDashboard from "@/components/HRAdminDashboard";
 import heroImage from "@/assets/hero-dashboard.jpg";
-
-type UserRole = "employee" | "category_owner" | "hr_admin";
+import { storageService, getUserRole, type User } from "@/utils/storage";
 
 const Index = () => {
-  const [currentUser, setCurrentUser] = useState<{ email: string; role: UserRole; name: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<UserRole>("employee");
   const { toast } = useToast();
+
+  // Initialize storage and check for existing session
+  useEffect(() => {
+    storageService.initializeData();
+    const existingUser = storageService.getCurrentUser();
+    if (existingUser) {
+      setCurrentUser(existingUser);
+    }
+  }, []);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,29 +37,53 @@ const Index = () => {
       return;
     }
 
-    // Simulate role-based login
+    // Determine role based on email and create/get user
+    const role = getUserRole(email);
     const name = email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    setCurrentUser({ email, role, name });
+    const employeeId = `EMP${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+    
+    const user: User = {
+      email,
+      name,
+      role: role as User['role'],
+      employeeId
+    };
+
+    // Store user session
+    storageService.setCurrentUser(user);
+    setCurrentUser(user);
+    
+    // Add user to storage if not exists
+    const users = storageService.getUsers();
+    if (!users.find(u => u.email === email)) {
+      storageService.setUsers([...users, user]);
+    }
     
     toast({
       title: "Welcome to HelpDesk Pro",
-      description: `Logged in as ${name} (${role.replace('_', ' ')})`,
+      description: `Logged in as ${name}`,
     });
   };
 
   const handleLogout = () => {
+    storageService.setCurrentUser(null);
     setCurrentUser(null);
     setEmail("");
-    setRole("employee");
+    
+    toast({
+      title: "Signed Out",
+      description: "You have been successfully signed out",
+    });
   };
 
+  // Route to appropriate dashboard based on user role
   if (currentUser) {
     if (currentUser.role === "employee") {
       return <EmployeeDashboard user={currentUser} onLogout={handleLogout} />;
-    } else if (currentUser.role === "category_owner") {
-      return <CategoryOwnerDashboard user={currentUser} onLogout={handleLogout} />;
-    } else if (currentUser.role === "hr_admin") {
+    } else if (currentUser.role === "owner") {
       return <HRAdminDashboard user={currentUser} onLogout={handleLogout} />;
+    } else if (["it_owner", "hr_owner", "admin_owner", "accounts_owner"].includes(currentUser.role)) {
+      return <CategoryOwnerDashboard user={currentUser} onLogout={handleLogout} />;
     }
   }
 
@@ -153,17 +184,17 @@ const Index = () => {
               </div>
               
               <div className="space-y-2">
-                <label htmlFor="role" className="text-sm font-medium">Role</label>
-                <Select value={role} onValueChange={(value: UserRole) => setRole(value)}>
-                  <SelectTrigger className="h-11">
-                    <SelectValue placeholder="Select your role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="employee">Employee</SelectItem>
-                    <SelectItem value="category_owner">Category Owner</SelectItem>
-                    <SelectItem value="hr_admin">HR Administrator</SelectItem>
-                  </SelectContent>
-                </Select>
+                <label htmlFor="email-hint" className="text-sm font-medium text-muted-foreground">
+                  Role is auto-detected from email:
+                </label>
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <div>• it.* → IT Infrastructure Owner</div>
+                  <div>• hr.* → HR Owner</div>
+                  <div>• admin.* → Admin Owner</div>
+                  <div>• accounts.* → Accounts Owner</div>
+                  <div>• owner@ → System Owner (All Access)</div>
+                  <div>• Others → Employee</div>
+                </div>
               </div>
 
               <Button type="submit" className="w-full h-11 gradient-primary text-white font-medium">
@@ -174,20 +205,24 @@ const Index = () => {
             {/* Demo Info */}
             <div className="mt-6 p-4 bg-muted rounded-lg">
               <p className="text-sm text-muted-foreground mb-2">
-                <strong>Demo Roles:</strong>
+                <strong>Demo Access Examples:</strong>
               </p>
               <div className="space-y-1 text-xs">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-xs">Employee</Badge>
-                  <span className="text-muted-foreground">Create & track tickets</span>
+                  <Badge variant="outline" className="text-xs">john.doe@company.com</Badge>
+                  <span className="text-muted-foreground">Employee Access</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-xs">Category Owner</Badge>
-                  <span className="text-muted-foreground">Manage department tickets</span>
+                  <Badge variant="outline" className="text-xs">it.admin@company.com</Badge>
+                  <span className="text-muted-foreground">IT Infrastructure Owner</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-xs">HR Admin</Badge>
-                  <span className="text-muted-foreground">Full analytics & oversight</span>
+                  <Badge variant="outline" className="text-xs">hr.admin@company.com</Badge>
+                  <span className="text-muted-foreground">HR Owner</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs">owner@company.com</Badge>
+                  <span className="text-muted-foreground">Full System Access</span>
                 </div>
               </div>
             </div>
