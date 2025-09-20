@@ -29,6 +29,8 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isEscalationModalOpen, setIsEscalationModalOpen] = useState(false);
+  const [ticketToEscalate, setTicketToEscalate] = useState<Ticket | null>(null);
   const { toast } = useToast();
 
   const category = getCategoryForRole(user.role) || "Others";

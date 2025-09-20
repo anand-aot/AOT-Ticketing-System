@@ -36,6 +36,25 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
 
   useEffect(() => {
     loadTickets();
+    
+    // Check if mobile
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    // Set up SLA checking interval
+    const slaInterval = setInterval(() => {
+      storageService.checkSLAViolations();
+      storageService.checkPendingReminders();
+    }, 60000); // Check every minute
+    
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+      clearInterval(slaInterval);
+    };
   }, [user.email]);
 
   const loadTickets = () => {
@@ -118,6 +137,41 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
   const handleOpenChat = (ticket: Ticket) => {
     setSelectedTicket(ticket);
     setIsChatOpen(true);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const newFiles = Array.from(e.target.files);
+      
+      // Validate files
+      const validFiles: File[] = [];
+      for (const file of newFiles) {
+        const validation = storageService.validateFile(file);
+        if (validation.isValid) {
+          validFiles.push(file);
+        } else {
+          toast({
+            title: "Invalid File",
+            description: `${file.name}: ${validation.error}`,
+            variant: "destructive"
+          });
+        }
+      }
+      
+      setAttachments(prev => [...prev, ...validFiles]);
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
 

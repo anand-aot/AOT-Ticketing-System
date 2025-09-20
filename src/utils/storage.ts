@@ -17,6 +17,10 @@ export interface Ticket {
   resolutionTime?: number;
   escalationReason?: string;
   escalationDate?: string;
+  escalation?: Escalation;
+  slaViolated?: boolean;
+  slaDueDate?: string;
+  attachments?: Attachment[];
   messages: ChatMessage[];
 }
 
@@ -49,6 +53,46 @@ export interface Notification {
   ticketId?: string;
 }
 
+export interface Attachment {
+  id: string;
+  ticketId: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  fileData: string; // Base64 for demo
+}
+
+export interface AuditLog {
+  id: string;
+  ticketId: string;
+  action: "created" | "updated" | "assigned" | "escalated" | "closed" | "message_added";
+  details: string;
+  performedBy: string;
+  performedAt: string;
+  oldValue?: string;
+  newValue?: string;
+}
+
+export interface SLAConfig {
+  category: string;
+  priority: string;
+  responseTimeHours: number;
+  resolutionTimeHours: number;
+}
+
+export interface Escalation {
+  id: string;
+  ticketId: string;
+  reason: string;
+  description: string;
+  timeline: string;
+  escalatedBy: string;
+  escalatedAt: string;
+  resolved: boolean;
+}
+
 // Role mappings for category owners
 const ROLE_CATEGORIES: Record<string, string> = {
   'it_owner': 'IT Infrastructure',
@@ -62,6 +106,33 @@ class StorageService {
   private readonly USERS_KEY = 'helpdesk_users';
   private readonly NOTIFICATIONS_KEY = 'helpdesk_notifications';
   private readonly CURRENT_USER_KEY = 'helpdesk_current_user';
+  private readonly AUDIT_LOGS_KEY = 'helpdesk_audit_logs';
+  private readonly ATTACHMENTS_KEY = 'helpdesk_attachments';
+  private readonly ESCALATIONS_KEY = 'helpdesk_escalations';
+
+  // SLA Configuration (demo data)
+  private readonly SLA_CONFIGS: SLAConfig[] = [
+    { category: "IT Infrastructure", priority: "Critical", responseTimeHours: 1, resolutionTimeHours: 4 },
+    { category: "IT Infrastructure", priority: "High", responseTimeHours: 2, resolutionTimeHours: 8 },
+    { category: "IT Infrastructure", priority: "Medium", responseTimeHours: 4, resolutionTimeHours: 24 },
+    { category: "IT Infrastructure", priority: "Low", responseTimeHours: 8, resolutionTimeHours: 72 },
+    { category: "HR", priority: "Critical", responseTimeHours: 2, resolutionTimeHours: 8 },
+    { category: "HR", priority: "High", responseTimeHours: 4, resolutionTimeHours: 24 },
+    { category: "HR", priority: "Medium", responseTimeHours: 8, resolutionTimeHours: 48 },
+    { category: "HR", priority: "Low", responseTimeHours: 24, resolutionTimeHours: 120 },
+    { category: "Administration", priority: "Critical", responseTimeHours: 2, resolutionTimeHours: 8 },
+    { category: "Administration", priority: "High", responseTimeHours: 4, resolutionTimeHours: 24 },
+    { category: "Administration", priority: "Medium", responseTimeHours: 8, resolutionTimeHours: 48 },
+    { category: "Administration", priority: "Low", responseTimeHours: 24, resolutionTimeHours: 120 },
+    { category: "Accounts", priority: "Critical", responseTimeHours: 1, resolutionTimeHours: 4 },
+    { category: "Accounts", priority: "High", responseTimeHours: 2, resolutionTimeHours: 8 },
+    { category: "Accounts", priority: "Medium", responseTimeHours: 4, resolutionTimeHours: 24 },
+    { category: "Accounts", priority: "Low", responseTimeHours: 8, resolutionTimeHours: 72 },
+    { category: "Others", priority: "Critical", responseTimeHours: 2, resolutionTimeHours: 8 },
+    { category: "Others", priority: "High", responseTimeHours: 4, resolutionTimeHours: 24 },
+    { category: "Others", priority: "Medium", responseTimeHours: 8, resolutionTimeHours: 48 },
+    { category: "Others", priority: "Low", responseTimeHours: 24, resolutionTimeHours: 120 }
+  ];
 
   // Initialize with sample data if empty
   initializeData() {
@@ -90,11 +161,28 @@ class StorageService {
       id: `TKT-${String(tickets.length + 1).padStart(3, '0')}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      attachments: [],
       messages: []
     };
     
+    // Calculate SLA due date
+    const slaConfig = this.getSLAConfig(ticket.category, ticket.priority);
+    if (slaConfig) {
+      const dueDate = new Date();
+      dueDate.setHours(dueDate.getHours() + slaConfig.resolutionTimeHours);
+      newTicket.slaDueDate = dueDate.toISOString();
+    }
+    
     tickets.unshift(newTicket);
     this.setTickets(tickets);
+    
+    // Add audit log
+    this.addAuditLog({
+      ticketId: newTicket.id,
+      action: 'created',
+      details: `Ticket created: ${ticket.subject}`,
+      performedBy: ticket.employeeEmail
+    });
     
     // Create notification for category owner
     this.addNotification({
@@ -105,22 +193,43 @@ class StorageService {
       ticketId: newTicket.id
     });
     
+    // Simulate email notification
+    this.simulateEmailNotification(
+      this.getCategoryOwnerEmail(ticket.category) || 'owner@company.com',
+      'New Ticket Created',
+      `Ticket ${newTicket.id}: ${ticket.subject}`
+    );
+    
     return newTicket;
   }
 
-  updateTicket(ticketId: string, updates: Partial<Ticket>): void {
+  updateTicket(ticketId: string, updates: Partial<Ticket>, performedBy?: string): void {
     const tickets = this.getTickets();
     const index = tickets.findIndex(t => t.id === ticketId);
     if (index !== -1) {
-      const oldStatus = tickets[index].status;
+      const oldTicket = { ...tickets[index] };
       tickets[index] = { 
         ...tickets[index], 
         ...updates, 
         updatedAt: new Date().toISOString() 
       };
       
+      // Add audit logs for each change
+      Object.keys(updates).forEach(key => {
+        if (key !== 'updatedAt' && oldTicket[key as keyof Ticket] !== updates[key as keyof Ticket]) {
+          this.addAuditLog({
+            ticketId: ticketId,
+            action: 'updated',
+            details: `${key} changed`,
+            performedBy: performedBy || 'system',
+            oldValue: String(oldTicket[key as keyof Ticket] || 'none'),
+            newValue: String(updates[key as keyof Ticket] || 'none')
+          });
+        }
+      });
+      
       // Create notification if status changed
-      if (updates.status && oldStatus !== updates.status) {
+      if (updates.status && oldTicket.status !== updates.status) {
         this.addNotification({
           userId: tickets[index].employeeEmail,
           title: 'Ticket Status Updated',
@@ -128,6 +237,13 @@ class StorageService {
           type: 'info',
           ticketId: ticketId
         });
+        
+        // Simulate email notification
+        this.simulateEmailNotification(
+          tickets[index].employeeEmail,
+          'Ticket Status Updated',
+          `Your ticket ${ticketId} status changed to ${updates.status}`
+        );
       }
       
       this.setTickets(tickets);
@@ -157,6 +273,14 @@ class StorageService {
       ticket.updatedAt = new Date().toISOString();
       this.setTickets(tickets);
       
+      // Add audit log
+      this.addAuditLog({
+        ticketId: ticketId,
+        action: 'message_added',
+        details: `Message added by ${message.senderName}`,
+        performedBy: message.senderId
+      });
+      
       // Create notification for other party
       const recipient = message.senderRole === 'employee' 
         ? this.getCategoryOwnerEmail(ticket.category) || 'owner@company.com'
@@ -169,6 +293,13 @@ class StorageService {
         type: 'info',
         ticketId: ticketId
       });
+      
+      // Simulate email notification
+      this.simulateEmailNotification(
+        recipient,
+        'New Message in Ticket',
+        `New message in ticket ${ticketId}: ${message.message.substring(0, 100)}...`
+      );
     }
   }
 
@@ -242,6 +373,264 @@ class StorageService {
       notification.read = true;
       this.setNotifications(notifications);
     }
+  }
+
+  // Audit Logs Management
+  getAuditLogs(): AuditLog[] {
+    const stored = localStorage.getItem(this.AUDIT_LOGS_KEY);
+    return stored ? JSON.parse(stored) : [];
+  }
+
+  setAuditLogs(logs: AuditLog[]): void {
+    localStorage.setItem(this.AUDIT_LOGS_KEY, JSON.stringify(logs));
+  }
+
+  addAuditLog(log: Omit<AuditLog, 'id' | 'performedAt'>): void {
+    const logs = this.getAuditLogs();
+    const newLog: AuditLog = {
+      ...log,
+      id: `audit-${Date.now()}`,
+      performedAt: new Date().toISOString()
+    };
+    
+    logs.unshift(newLog);
+    this.setAuditLogs(logs);
+  }
+
+  getTicketAuditLogs(ticketId: string): AuditLog[] {
+    return this.getAuditLogs().filter(log => log.ticketId === ticketId);
+  }
+
+  // SLA Management
+  getSLAConfig(category: string, priority: string): SLAConfig | null {
+    return this.SLA_CONFIGS.find(config => 
+      config.category === category && config.priority === priority
+    ) || null;
+  }
+
+  checkSLAViolations(): Ticket[] {
+    const tickets = this.getTickets().filter(t => t.status !== 'Closed');
+    const violatedTickets: Ticket[] = [];
+    
+    tickets.forEach(ticket => {
+      if (ticket.slaDueDate) {
+        const dueDate = new Date(ticket.slaDueDate);
+        const now = new Date();
+        
+        if (now > dueDate && !ticket.slaViolated) {
+          ticket.slaViolated = true;
+          violatedTickets.push(ticket);
+          
+          // Create notification for SLA violation
+          this.addNotification({
+            userId: this.getCategoryOwnerEmail(ticket.category) || 'owner@company.com',
+            title: 'SLA Violation',
+            message: `Ticket ${ticket.id} has exceeded SLA deadline`,
+            type: 'error',
+            ticketId: ticket.id
+          });
+        }
+      }
+    });
+    
+    if (violatedTickets.length > 0) {
+      this.setTickets(this.getTickets());
+    }
+    
+    return violatedTickets;
+  }
+
+  // Escalation Management
+  getEscalations(): Escalation[] {
+    const stored = localStorage.getItem(this.ESCALATIONS_KEY);
+    return stored ? JSON.parse(stored) : [];
+  }
+
+  setEscalations(escalations: Escalation[]): void {
+    localStorage.setItem(this.ESCALATIONS_KEY, JSON.stringify(escalations));
+  }
+
+  escalateTicket(ticketId: string, reason: string, description: string, timeline: string, escalatedBy: string): void {
+    const escalation: Escalation = {
+      id: `esc-${Date.now()}`,
+      ticketId,
+      reason,
+      description,
+      timeline,
+      escalatedBy,
+      escalatedAt: new Date().toISOString(),
+      resolved: false
+    };
+    
+    const escalations = this.getEscalations();
+    escalations.unshift(escalation);
+    this.setEscalations(escalations);
+    
+    // Update ticket status
+    this.updateTicket(ticketId, { 
+      status: 'Escalated', 
+      escalation,
+      escalationReason: reason,
+      escalationDate: new Date().toISOString()
+    }, escalatedBy);
+    
+    // Add audit log
+    this.addAuditLog({
+      ticketId,
+      action: 'escalated',
+      details: `Ticket escalated: ${reason}`,
+      performedBy: escalatedBy
+    });
+    
+    // Create notification
+    this.addNotification({
+      userId: 'owner@company.com',
+      title: 'Ticket Escalated',
+      message: `Ticket ${ticketId} has been escalated: ${reason}`,
+      type: 'warning',
+      ticketId
+    });
+  }
+
+  // File Attachment Management
+  getAttachments(): Attachment[] {
+    const stored = localStorage.getItem(this.ATTACHMENTS_KEY);
+    return stored ? JSON.parse(stored) : [];
+  }
+
+  setAttachments(attachments: Attachment[]): void {
+    localStorage.setItem(this.ATTACHMENTS_KEY, JSON.stringify(attachments));
+  }
+
+  validateFile(file: File): { isValid: boolean; error?: string } {
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+    
+    if (file.size > maxSize) {
+      return { isValid: false, error: 'File size must be less than 10MB' };
+    }
+    
+    if (!allowedTypes.includes(file.type)) {
+      return { isValid: false, error: 'Only PDF, PNG, and JPEG files are allowed' };
+    }
+    
+    return { isValid: true };
+  }
+
+  addAttachment(ticketId: string, file: File, uploadedBy: string): Promise<Attachment> {
+    return new Promise((resolve, reject) => {
+      const validation = this.validateFile(file);
+      if (!validation.isValid) {
+        reject(new Error(validation.error));
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onload = () => {
+        const attachment: Attachment = {
+          id: `att-${Date.now()}`,
+          ticketId,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          uploadedBy,
+          uploadedAt: new Date().toISOString(),
+          fileData: reader.result as string
+        };
+        
+        const attachments = this.getAttachments();
+        attachments.unshift(attachment);
+        this.setAttachments(attachments);
+        
+        // Update ticket
+        const tickets = this.getTickets();
+        const ticket = tickets.find(t => t.id === ticketId);
+        if (ticket) {
+          if (!ticket.attachments) ticket.attachments = [];
+          ticket.attachments.push(attachment);
+          this.setTickets(tickets);
+        }
+        
+        // Add audit log
+        this.addAuditLog({
+          ticketId,
+          action: 'updated',
+          details: `File attached: ${file.name}`,
+          performedBy: uploadedBy
+        });
+        
+        resolve(attachment);
+      };
+      
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  getTicketAttachments(ticketId: string): Attachment[] {
+    return this.getAttachments().filter(att => att.ticketId === ticketId);
+  }
+
+  // Automated Reminders
+  checkPendingReminders(): void {
+    const tickets = this.getTickets().filter(t => 
+      t.status === 'Open' || t.status === 'In Progress'
+    );
+    
+    const now = new Date();
+    
+    tickets.forEach(ticket => {
+      const createdDate = new Date(ticket.createdAt);
+      const hoursSinceCreated = (now.getTime() - createdDate.getTime()) / (1000 * 60 * 60);
+      
+      // Send reminders for tickets older than 24 hours
+      if (hoursSinceCreated > 24) {
+        const lastReminder = this.getNotifications()
+          .find(n => n.ticketId === ticket.id && n.title.includes('Reminder'));
+        
+        const lastReminderDate = lastReminder ? new Date(lastReminder.createdAt) : null;
+        const hoursSinceLastReminder = lastReminderDate 
+          ? (now.getTime() - lastReminderDate.getTime()) / (1000 * 60 * 60)
+          : Infinity;
+        
+        // Send reminder every 24 hours
+        if (hoursSinceLastReminder > 24) {
+          this.addNotification({
+            userId: this.getCategoryOwnerEmail(ticket.category) || 'owner@company.com',
+            title: 'Ticket Reminder',
+            message: `Ticket ${ticket.id} requires attention (${Math.floor(hoursSinceCreated)} hours old)`,
+            type: 'warning',
+            ticketId: ticket.id
+          });
+        }
+      }
+    });
+  }
+
+  // Simulate email notifications (for demo)
+  simulateEmailNotification(recipient: string, subject: string, body: string): void {
+    console.log(`📧 Email Notification Sent:
+To: ${recipient}
+Subject: ${subject}
+Body: ${body}
+Timestamp: ${new Date().toISOString()}`);
+    
+    // In real implementation, this would integrate with email service
+    // For demo, we just log to console and could show a toast
+  }
+
+  // Get tickets by status for Jira-style columns
+  getTicketsByStatus(employeeEmail?: string): Record<string, Ticket[]> {
+    let tickets = employeeEmail 
+      ? this.getTicketsByEmployee(employeeEmail)
+      : this.getTickets();
+    
+    return {
+      'Open': tickets.filter(t => t.status === 'Open'),
+      'In Progress': tickets.filter(t => t.status === 'In Progress'),
+      'Escalated': tickets.filter(t => t.status === 'Escalated'),
+      'Closed': tickets.filter(t => t.status === 'Closed')
+    };
   }
 
   // Export functionality - role-based
