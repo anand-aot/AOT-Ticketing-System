@@ -10,13 +10,14 @@ import {
   Shield, LogOut, MessageSquare, Clock, TrendingUp, 
   AlertTriangle, CheckCircle, Filter, Search, Star,
   BarChart3, Users, Target, Timer, Download, Building,
-  Zap, FileText, DollarSign
+  Zap, FileText, DollarSign, History, ThumbsUp
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { storageService, canAccessAllTickets, type Ticket, type User } from "@/utils/storage";
 import ChatModal from "./ChatModal";
 import NotificationSystem from "./NotificationSystem";
+import TicketHistoryModal from "./TicketHistoryModal";
 
 interface HRAdminDashboardProps {
   user: User;
@@ -31,6 +32,8 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [selectedTicketForHistory, setSelectedTicketForHistory] = useState<string | null>(null);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const { toast } = useToast();
 
   const categories = ["IT Infrastructure", "HR", "Administration", "Accounts", "Others"];
@@ -88,6 +91,13 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
     ? ticketsWithResponseTime.reduce((sum, t) => sum + (t.responseTime || 0), 0) / ticketsWithResponseTime.length
     : 0;
 
+  // SLA compliance metrics - simplified version for demo
+  const slaCompliantTickets = tickets.filter(t => t.status === "Closed" && (t.resolutionTime || 0) <= 24).length;
+  const slaComplianceRate = totalTickets > 0 ? (slaCompliantTickets / totalTickets) * 100 : 0;
+  
+  // Reviewed tickets (with ratings)
+  const reviewedTickets = ticketsWithRating.sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
+
   const getPriorityColor = (priority: string) => {
     switch (priority) {
       case "Critical": return "bg-priority-critical text-white";
@@ -139,6 +149,11 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
   const handleOpenChat = (ticket: Ticket) => {
     setSelectedTicket(ticket);
     setIsChatOpen(true);
+  };
+
+  const handleOpenHistory = (ticketId: string) => {
+    setSelectedTicketForHistory(ticketId);
+    setIsHistoryModalOpen(true);
   };
 
   const handleStatusChange = (ticketId: string, newStatus: Ticket["status"]) => {
@@ -198,7 +213,7 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
 
       <div className="container mx-auto px-4 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="overview" className="gap-2">
               <BarChart3 className="w-4 h-4" />
               Overview
@@ -211,6 +226,14 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
               <MessageSquare className="w-4 h-4" />
               All Tickets ({totalTickets})
             </TabsTrigger>
+            <TabsTrigger value="reviewed" className="gap-2">
+              <ThumbsUp className="w-4 h-4" />
+              Reviewed ({reviewedTickets.length})
+            </TabsTrigger>
+            <TabsTrigger value="audit" className="gap-2">
+              <History className="w-4 h-4" />
+              Audit Logs
+            </TabsTrigger>
             <TabsTrigger value="analytics" className="gap-2">
               <TrendingUp className="w-4 h-4" />
               Analytics
@@ -219,7 +242,7 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
 
           <TabsContent value="overview" className="space-y-6 mt-6">
             {/* Key Metrics */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
               <Card>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
@@ -272,6 +295,17 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                       <p className="text-2xl font-bold text-success">{closedTickets}</p>
                     </div>
                     <CheckCircle className="w-8 h-8 text-success" />
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">SLA Compliant</p>
+                      <p className="text-2xl font-bold text-success">{slaComplianceRate.toFixed(1)}%</p>
+                    </div>
+                    <Target className="w-8 h-8 text-success" />
                   </div>
                 </CardContent>
               </Card>
@@ -483,15 +517,26 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                               </SelectContent>
                             </Select>
                             
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="gap-2"
-                              onClick={() => handleOpenChat(ticket)}
-                            >
-                              <MessageSquare className="w-4 h-4" />
-                              Chat {ticket.messages.length > 0 && `(${ticket.messages.length})`}
-                            </Button>
+                            <div className="flex gap-2">
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="gap-2"
+                                onClick={() => handleOpenChat(ticket)}
+                              >
+                                <MessageSquare className="w-4 h-4" />
+                                Chat {ticket.messages.length > 0 && `(${ticket.messages.length})`}
+                              </Button>
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="gap-2"
+                                onClick={() => handleOpenHistory(ticket.id)}
+                              >
+                                <History className="w-4 h-4" />
+                                History
+                              </Button>
+                            </div>
                           </div>
                         </div>
                         
@@ -507,6 +552,139 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
                 ))
               )}
             </div>
+          </TabsContent>
+
+          <TabsContent value="reviewed" className="space-y-6 mt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold">Reviewed Tickets</h2>
+                <p className="text-muted-foreground">Tickets with customer ratings and feedback</p>
+              </div>
+              <Badge variant="secondary">{reviewedTickets.length} rated tickets</Badge>
+            </div>
+
+            <div className="grid gap-4">
+              {reviewedTickets.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center">
+                    <ThumbsUp className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                    <h3 className="text-lg font-medium mb-2">No reviewed tickets yet</h3>
+                    <p className="text-muted-foreground">Customer ratings will appear here once tickets are rated</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                reviewedTickets.map((ticket) => (
+                  <Card key={ticket.id} className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-6">
+                      <div className="space-y-4">
+                        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <Badge variant="outline" className="font-mono">
+                                {ticket.id}
+                              </Badge>
+                              <Badge className={getPriorityColor(ticket.priority)}>
+                                {ticket.priority}
+                              </Badge>
+                              <Badge className={getStatusColor(ticket.status)}>
+                                {ticket.status}
+                              </Badge>
+                              <Badge variant="outline">
+                                {ticket.category}
+                              </Badge>
+                            </div>
+                            <h3 className="font-semibold text-lg mb-2">{ticket.subject}</h3>
+                            <p className="text-muted-foreground mb-2">{ticket.description}</p>
+                            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-4 h-4" />
+                                {new Date(ticket.createdAt).toLocaleDateString()}
+                              </span>
+                              <span>Employee: {ticket.employeeName}</span>
+                              {ticket.responseTime && (
+                                <span>Response: {ticket.responseTime}h</span>
+                              )}
+                              {ticket.resolutionTime && (
+                                <span>Resolution: {ticket.resolutionTime}h</span>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col gap-3 lg:w-64">
+                            <div className="p-3 bg-muted/50 rounded-lg">
+                              <span className="text-sm text-muted-foreground mb-2 block">Customer Rating:</span>
+                              {renderRating(ticket.rating)}
+                            </div>
+                            <div className="flex gap-2">
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="gap-2 flex-1"
+                                onClick={() => handleOpenChat(ticket)}
+                              >
+                                <MessageSquare className="w-4 h-4" />
+                                Chat
+                              </Button>
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="gap-2 flex-1"
+                                onClick={() => handleOpenHistory(ticket.id)}
+                              >
+                                <History className="w-4 h-4" />
+                                History
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="audit" className="space-y-6 mt-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold">Audit Logs</h2>
+                <p className="text-muted-foreground">Complete history of all ticket actions and changes</p>
+              </div>
+            </div>
+            
+            <Card>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    View complete audit logs for all tickets. Click on any ticket in the tickets tab to see its detailed history.
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/50 rounded-lg">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-primary">{storageService.getAuditLogs().length}</div>
+                      <div className="text-sm text-muted-foreground">Total Actions</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-info">{storageService.getAuditLogs().filter(l => l.action === 'created').length}</div>
+                      <div className="text-sm text-muted-foreground">Created</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-warning">{storageService.getAuditLogs().filter(l => l.action === 'updated').length}</div>
+                      <div className="text-sm text-muted-foreground">Updates</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-success">{storageService.getAuditLogs().filter(l => l.action === 'closed').length}</div>
+                      <div className="text-sm text-muted-foreground">Closed</div>
+                    </div>
+                  </div>
+                  <div className="text-center pt-4">
+                    <p className="text-sm text-muted-foreground">
+                      💡 Click the "History" button on any ticket to view its complete activity timeline
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6 mt-6">
@@ -627,6 +805,15 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
           setIsChatOpen(false);
           setSelectedTicket(null);
           loadTickets();
+        }}
+      />
+
+      <TicketHistoryModal
+        ticketId={selectedTicketForHistory}
+        isModalOpen={isHistoryModalOpen}
+        onClose={() => {
+          setIsHistoryModalOpen(false);
+          setSelectedTicketForHistory(null);
         }}
       />
     </div>
