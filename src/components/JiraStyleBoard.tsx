@@ -23,21 +23,21 @@ export const JiraStyleBoard: React.FC<JiraStyleBoardProps> = ({
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
-      case 'Critical': return 'bg-red-100 text-red-800 border-red-200';
-      case 'High': return 'bg-orange-100 text-orange-800 border-orange-200';
-      case 'Medium': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'Low': return 'bg-green-100 text-green-800 border-green-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+      case 'Critical': return 'bg-priority-critical text-white';
+      case 'High': return 'bg-priority-high text-white';
+      case 'Medium': return 'bg-priority-medium text-white';
+      case 'Low': return 'bg-priority-low text-white';
+      default: return 'bg-muted text-muted-foreground';
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusDotColor = (status: string) => {
     switch (status) {
-      case 'Open': return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'In Progress': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'Escalated': return 'bg-red-100 text-red-800 border-red-200';
-      case 'Closed': return 'bg-green-100 text-green-800 border-green-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+      case 'Open': return 'bg-info';
+      case 'In Progress': return 'bg-warning';
+      case 'Escalated': return 'bg-destructive';
+      case 'Closed': return 'bg-success';
+      default: return 'bg-muted-foreground';
     }
   };
 
@@ -86,7 +86,7 @@ export const JiraStyleBoard: React.FC<JiraStyleBoardProps> = ({
     <Card 
       className={`mb-3 cursor-pointer transition-all duration-200 hover:shadow-md ${
         isDragging ? 'opacity-50 transform rotate-2' : ''
-      } ${isOverdue(ticket) ? 'border-red-300 bg-red-50/30' : ''}`}
+      } ${isOverdue(ticket) ? 'border-destructive/30 bg-destructive/5' : ''}`}
       draggable
       onDragStart={(e) => handleDragStart(e, ticket)}
       onClick={() => onTicketClick(ticket)}
@@ -95,7 +95,7 @@ export const JiraStyleBoard: React.FC<JiraStyleBoardProps> = ({
         <div className="flex justify-between items-start mb-2">
           <span className="text-sm font-mono text-muted-foreground">{ticket.id}</span>
           {isOverdue(ticket) && (
-            <AlertTriangle className="h-4 w-4 text-red-500" />
+            <AlertTriangle className="h-4 w-4 text-destructive" />
           )}
         </div>
         
@@ -104,7 +104,7 @@ export const JiraStyleBoard: React.FC<JiraStyleBoardProps> = ({
         </h4>
         
         <div className="flex flex-wrap gap-1 mb-3">
-          <Badge variant="outline" className={`text-xs ${getPriorityColor(ticket.priority)}`}>
+          <Badge className={getPriorityColor(ticket.priority)}>
             {ticket.priority}
           </Badge>
           <Badge variant="outline" className="text-xs">
@@ -140,7 +140,7 @@ export const JiraStyleBoard: React.FC<JiraStyleBoardProps> = ({
         
         {ticket.slaDueDate && (
           <div className={`flex items-center gap-1 mt-2 text-xs ${
-            isOverdue(ticket) ? 'text-red-600' : 'text-orange-600'
+            isOverdue(ticket) ? 'text-destructive' : 'text-warning'
           }`}>
             <Clock className="h-3 w-3" />
             <span>Due: {formatDate(ticket.slaDueDate)}</span>
@@ -164,7 +164,7 @@ export const JiraStyleBoard: React.FC<JiraStyleBoardProps> = ({
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center justify-between text-sm">
             <span className="flex items-center gap-2">
-              <div className={`w-3 h-3 rounded-full ${getStatusColor(status).replace('bg-', 'bg-').replace('text-', '').replace('border-', '')}`} />
+              <div className={`w-3 h-3 rounded-full ${getStatusDotColor(status)}`} />
               {status}
             </span>
             <Badge variant="secondary" className="text-xs">

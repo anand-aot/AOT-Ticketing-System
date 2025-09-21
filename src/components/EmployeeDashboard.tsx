@@ -5,12 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, MessageSquare, Clock, User as UserIcon, LogOut, Filter, Search, Star, Download } from "lucide-react";
+import { Plus, MessageSquare, Clock, User as UserIcon, LogOut, Filter, Search, Star, Download, LayoutGrid, List } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { storageService, type Ticket, type User } from "@/utils/storage";
 import ChatModal from "./ChatModal";
 import NotificationSystem from "./NotificationSystem";
+import { JiraStyleBoard } from "./JiraStyleBoard";
 
 interface EmployeeDashboardProps {
   user: User;
@@ -27,6 +28,7 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
   const [ticketRating, setTicketRating] = useState<{ [key: string]: number }>({});
   const [isMobile, setIsMobile] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [viewMode, setViewMode] = useState<"board" | "list">("board");
   const { toast } = useToast();
 
   const [newTicket, setNewTicket] = useState({
@@ -70,6 +72,23 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
                          ticket.description.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesStatus && matchesSearch;
   });
+
+  // Organize tickets by status for Jira-style board
+  const ticketsByStatus = filteredTickets.reduce((acc, ticket) => {
+    const status = ticket.status;
+    if (!acc[status]) {
+      acc[status] = [];
+    }
+    acc[status].push(ticket);
+    return acc;
+  }, {} as Record<string, Ticket[]>);
+
+  // Ensure all statuses are present
+  const allStatuses = ["Open", "In Progress", "Escalated", "Closed"];
+  const organizedTickets = allStatuses.reduce((acc, status) => {
+    acc[status] = ticketsByStatus[status] || [];
+    return acc;
+  }, {} as Record<string, Ticket[]>);
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
@@ -303,7 +322,7 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
 
         {activeTab === "dashboard" && (
           <div className="space-y-6">
-            {/* Filters */}
+            {/* Filters and View Toggle */}
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -327,31 +346,60 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
                   <SelectItem value="closed">Closed</SelectItem>
                 </SelectContent>
               </Select>
+              <div className="flex gap-2">
+                <Button
+                  variant={viewMode === "board" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setViewMode("board")}
+                  className="gap-2"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                  Board
+                </Button>
+                <Button
+                  variant={viewMode === "list" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setViewMode("list")}
+                  className="gap-2"
+                >
+                  <List className="w-4 h-4" />
+                  List
+                </Button>
+              </div>
             </div>
 
-            {/* Tickets List */}
-            <div className="grid gap-4">
-              {filteredTickets.length === 0 ? (
-                <Card>
-                  <CardContent className="py-12 text-center">
-                    <MessageSquare className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-medium mb-2">No tickets found</h3>
-                    <p className="text-muted-foreground mb-4">
-                      {searchQuery || filterStatus !== "all" 
-                        ? "Try adjusting your search or filters"
-                        : "Create your first ticket to get started"
-                      }
-                    </p>
-                    {!searchQuery && filterStatus === "all" && (
-                      <Button onClick={() => setActiveTab("create")} className="gap-2">
-                        <Plus className="w-4 h-4" />
-                        Create Ticket
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              ) : (
-                filteredTickets.map((ticket) => (
+            {/* Tickets Display */}
+            {filteredTickets.length === 0 ? (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <MessageSquare className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-medium mb-2">No tickets found</h3>
+                  <p className="text-muted-foreground mb-4">
+                    {searchQuery || filterStatus !== "all" 
+                      ? "Try adjusting your search or filters"
+                      : "Create your first ticket to get started"
+                    }
+                  </p>
+                  {!searchQuery && filterStatus === "all" && (
+                    <Button onClick={() => setActiveTab("create")} className="gap-2">
+                      <Plus className="w-4 h-4" />
+                      Create Ticket
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            ) : viewMode === "board" ? (
+              <div className="min-h-[600px]">
+                <JiraStyleBoard
+                  tickets={organizedTickets}
+                  onTicketClick={handleOpenChat}
+                  user={user}
+                  isMobile={isMobile}
+                />
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                {filteredTickets.map((ticket) => (
                   <Card key={ticket.id} className="hover:shadow-md transition-shadow">
                     <CardContent className="p-6">
                       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
@@ -392,9 +440,9 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
                       </div>
                     </CardContent>
                   </Card>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
