@@ -25,6 +25,8 @@ const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [ticketRating, setTicketRating] = useState<{ [key: string]: number }>({});
+  const [isMobile, setIsMobile] = useState(false);
+  const [attachments, setAttachments] = useState<File[]>([]);
   const { toast } = useToast();
 
   const [newTicket, setNewTicket] = useState({
