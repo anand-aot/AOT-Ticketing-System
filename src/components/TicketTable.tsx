@@ -766,7 +766,7 @@ export default function TicketTable({ user, tickets, assignableUsers, onUpdate, 
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {['Open', 'In Progress', اتحادیه, 'Closed'].map((status) => (
+                                {['Open', 'In Progress', 'Escalated', 'Closed'].map((status) => (
                                   <SelectItem key={status} value={status}>{status}</SelectItem>
                                 ))}
                               </SelectContent>

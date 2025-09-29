@@ -86,8 +86,15 @@ export default function AuditLogViewer({ ticketId }: AuditLogViewerProps) {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <CardTitle className="text-lg font-semibold text-foreground">
             {showAllLogs ? 'All Audit Logs' : `Audit Logs${ticketId ? ` for Ticket #${ticketId.slice(0, 8)}` : ''}`}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllLogs(!showAllLogs)}
+              className="h-8 text-xs ml-3"
+            >
+              {showAllLogs ? 'Show Ticket Logs' : 'Show All Logs'}
+            </Button>
           </CardTitle>
-          
           <div className="flex items-center gap-3">
             {logs.length > 0 && (
               <div className="flex items-center gap-2">
@@ -109,15 +116,6 @@ export default function AuditLogViewer({ ticketId }: AuditLogViewerProps) {
               <Calendar className="h-3 w-3" />
               <span>{getFilterCount()}</span>
             </div>
-            {/* Toggle Button */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowAllLogs(!showAllLogs)}
-              className="h-8 text-xs"
-            >
-              {showAllLogs ? 'Show Ticket Logs' : 'Show All Logs'}
-            </Button>
           </div>
         </div>
       </CardHeader>

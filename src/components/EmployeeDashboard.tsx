@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { storageService } from '@/utils/storage';
-import { Ticket, User, TicketCategory, TicketStatus, TicketPriority, Attachment } from '@/types';
+import { Ticket, User, TicketStatus } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useMediaQuery } from 'react-responsive';
 import { Link } from 'react-router-dom';
@@ -31,13 +31,11 @@ export default function EmployeeDashboard({ user: initialUser, onSignOut }: Empl
   const [searchQuery, setSearchQuery] = useState('');
   const { toast } = useToast();
   const isDesktop = useMediaQuery({ minWidth: 768 });
+  const isMobile = useMediaQuery({ maxWidth: 767 });
   const pageSize = 20;
   const isOwner = user.role === 'owner' || user.role === 'hr_owner';
-
-  // Check if profile is complete
   const isProfileComplete = Boolean(user.employeeId && user.sub_department);
 
-  // Watch for profile completion changes and refresh user data
   useEffect(() => {
     async function refreshUser() {
       try {
@@ -75,8 +73,6 @@ export default function EmployeeDashboard({ user: initialUser, onSignOut }: Empl
         });
       }
     }
-
-    // Refresh user data on mount and when navigating back
     refreshUser();
   }, [user.email]);
 
@@ -189,26 +185,26 @@ export default function EmployeeDashboard({ user: initialUser, onSignOut }: Empl
   };
 
   return (
-    <div className="container mx-auto p-4">
-      <h1 className="text-3xl font-bold mb-6">Employee Dashboard</h1>
+    <div className="container mx-auto p-4 sm:p-6">
+      <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6">Employee Dashboard</h1>
 
       {/* Profile incomplete warning banner */}
       {!isProfileComplete && (
-        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-md p-4">
-          <div className="flex items-center">
-            <AlertCircle className="h-5 w-5 text-amber-600 mr-3" />
-            <div>
-              <h3 className="text-sm font-medium text-amber-800">Profile Incomplete</h3>
-              <p className="text-sm text-amber-700 mt-1">
+        <div className="mb-4 sm:mb-6 bg-amber-50 border border-amber-200 rounded-md p-4">
+          <div className="flex items-center flex-col sm:flex-row gap-2 sm:gap-0">
+            <AlertCircle className="h-5 w-5 sm:h-6 sm:w-6 text-amber-600 mr-0 sm:mr-3 mb-2 sm:mb-0" />
+            <div className="text-center sm:text-left">
+              <h3 className="text-sm sm:text-base font-medium text-amber-800">Profile Incomplete</h3>
+              <p className="text-xs sm:text-sm text-amber-700 mt-1">
                 Please complete your profile by adding your Employee ID and Sub-Department to access all features.
               </p>
               <Link to="/profile">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="mt-2 border-amber-300 hover:bg-amber-100"
+                  className="mt-2 border-amber-300 hover:bg-amber-100 flex items-center"
                 >
-                  <UserIcon className="h-4 w-4 mr-1" />
+                  <UserIcon className="h-4 w-4 mr-2" />
                   Complete Profile
                 </Button>
               </Link>
@@ -218,28 +214,30 @@ export default function EmployeeDashboard({ user: initialUser, onSignOut }: Empl
       )}
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+        <TabsList className="mb-4 flex flex-wrap justify-center sm:justify-start gap-2">
+          <TabsTrigger value="dashboard" className="flex-1 sm:flex-none">
+            Dashboard
+          </TabsTrigger>
           <TabsTrigger
             value="create"
             disabled={!isProfileComplete}
-            className={!isProfileComplete ? 'opacity-50 cursor-not-allowed' : ''}
+            className={`flex-1 sm:flex-none ${!isProfileComplete ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             Create Ticket
             {!isProfileComplete && <span className="ml-1 text-xs">🔒</span>}
           </TabsTrigger>
         </TabsList>
 
-        <div className="flex justify-between items-center mb-4">
-          <div className="flex space-x-2">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 gap-4">
+          <div className="flex flex-col sm:flex-row sm:space-x-2 space-y-2 sm:space-y-0 w-full sm:w-auto">
             <Input
               placeholder="Search tickets..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64 border-primary/20"
+              className="w-full sm:w-64 border-primary/20"
             />
             <Select value={filterStatus} onValueChange={(value) => setFilterStatus(value as TicketStatus | 'All')}>
-              <SelectTrigger className="w-[180px] border-primary/20">
+              <SelectTrigger className="w-full sm:w-[180px] border-primary/20">
                 <SelectValue placeholder="Filter by Status" />
               </SelectTrigger>
               <SelectContent>
@@ -250,7 +248,7 @@ export default function EmployeeDashboard({ user: initialUser, onSignOut }: Empl
               </SelectContent>
             </Select>
           </div>
-          <div className="flex space-x-2">
+          <div className="flex space-x-2 justify-center sm:justify-end">
             <NotificationSystem
               user={user}
               onNotificationClick={(ticketId) => {
@@ -263,19 +261,19 @@ export default function EmployeeDashboard({ user: initialUser, onSignOut }: Empl
               <Button
                 variant="outline"
                 size="sm"
-                className="border-primary/20 hover:bg-muted/30 transition-colors"
+                className="border-primary/20 hover:bg-muted/30 transition-colors flex items-center"
               >
-                <UserIcon className="h-4 w-4 mr-1" />
+                <UserIcon className="h-4 w-4 mr-2" />
                 Profile
               </Button>
             </Link>
             <Button
               variant="outline"
               size="sm"
-              className="border-primary/20 hover:bg-muted/30 transition-colors"
+              className="border-primary/20 hover:bg-muted/30 transition-colors flex items-center"
               onClick={onSignOut}
             >
-              <LogOut className="h-4 w-4 mr-1" />
+              <LogOut className="h-4 w-4 mr-2" />
               Sign Out
             </Button>
           </div>
@@ -285,21 +283,23 @@ export default function EmployeeDashboard({ user: initialUser, onSignOut }: Empl
           {isOwner ? (
             <Card className="border-primary/20 shadow-md">
               <CardHeader className="bg-gradient-to-r from-primary/10 to-muted/50">
-                <CardTitle className="text-lg font-semibold text-foreground">Employee Dashboard</CardTitle>
+                <CardTitle className="text-base sm:text-lg font-semibold text-foreground">Employee Dashboard</CardTitle>
               </CardHeader>
               <CardContent>
-                {isDesktop && <JiraStyleDashboard user={user} tickets={tickets} onUpdate={handleUpdate} isMobile={!isDesktop} />}
-                <TicketTable
-                  user={user}
-                  tickets={tickets}
-                  onUpdate={handleUpdate}
-                  onPageChange={handlePageChange}
-                  totalPages={totalPages}
-                />
+                {isDesktop && <JiraStyleDashboard user={user} tickets={tickets} onUpdate={handleUpdate} isMobile={isMobile} />}
+                <div className={isMobile ? 'overflow-x-auto' : ''}>
+                  <TicketTable
+                    user={user}
+                    tickets={tickets}
+                    onUpdate={handleUpdate}
+                    onPageChange={handlePageChange}
+                    totalPages={totalPages}
+                  />
+                </div>
               </CardContent>
             </Card>
           ) : (
-            <JiraStyleDashboard user={user} tickets={filteredTickets} onUpdate={handleUpdate} isMobile={!isDesktop} />
+            <JiraStyleDashboard user={user} tickets={filteredTickets} onUpdate={handleUpdate} isMobile={isMobile} />
           )}
         </TabsContent>
 
@@ -307,7 +307,7 @@ export default function EmployeeDashboard({ user: initialUser, onSignOut }: Empl
           {isProfileComplete ? (
             <Card className="border-primary/20 shadow-md">
               <CardHeader className="bg-gradient-to-r from-primary/10 to-muted/50">
-                <CardTitle className="text-lg font-semibold text-foreground">Create New Ticket</CardTitle>
+                <CardTitle className="text-base sm:text-lg font-semibold text-foreground">Create New Ticket</CardTitle>
               </CardHeader>
               <CardContent>
                 <TicketForm user={user} onSubmit={handleFormSubmit} />
@@ -316,18 +316,18 @@ export default function EmployeeDashboard({ user: initialUser, onSignOut }: Empl
           ) : (
             <Card className="border-primary/20 shadow-md">
               <CardHeader className="bg-gradient-to-r from-primary/10 to-muted/50">
-                <CardTitle className="text-lg font-semibold text-foreground">Profile Required</CardTitle>
+                <CardTitle className="text-base sm:text-lg font-semibold text-foreground">Profile Required</CardTitle>
               </CardHeader>
               <CardContent className="text-center py-8">
-                <AlertCircle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
-                <h3 className="text-lg font-medium mb-2">Complete Your Profile</h3>
-                <p className="text-muted-foreground mb-4">
+                <AlertCircle className="h-10 w-10 sm:h-12 sm:w-12 text-amber-500 mx-auto mb-4" />
+                <h3 className="text-base sm:text-lg font-medium mb-2">Complete Your Profile</h3>
+                <p className="text-muted-foreground text-sm sm:text-base mb-4">
                   You need to complete your profile with Employee ID and Sub-Department before creating tickets.
                 </p>
                 <Link to="/profile">
                   <Button
                     variant="outline"
-                    className="border-primary/20 hover:bg-muted/30 transition-colors"
+                    className="border-primary/20 hover:bg-muted/30 transition-colors flex items-center mx-auto"
                   >
                     <UserIcon className="h-4 w-4 mr-2" />
                     Complete Profile

@@ -530,14 +530,14 @@ export default function JiraStyleDashboard({
                     {attachments[ticket.id].map((attachment) => (
                       <div
                         key={attachment.id}
-                        className="flex items-center justify-between p-3 bg-background rounded-lg border border-primary/20 hover:bg-muted/20 transition-colors"
+                        className="flex items-center justify-between "
                       >
                         <div className="flex items-center gap-3">
                           {attachment.fileType.startsWith('image/') ? (
                             <img
                               src={attachment.fileUrl}
                               alt={attachment.fileName}
-                              className="h-8 w-8 object-cover rounded-md"
+                              className="h-10 w-10 object-cover rounded-md"
                             />
                           ) : (
                             <FileText className="h-6 w-6 text-primary" />
@@ -558,7 +558,6 @@ export default function JiraStyleDashboard({
                               onClick={() => window.open(attachment.fileUrl, '_blank')}
                             >
                               <Eye className="h-4 w-4 mr-1" />
-                              View
                             </Button>
                           )}
                           <Button
@@ -568,7 +567,6 @@ export default function JiraStyleDashboard({
                             onClick={() => downloadAttachment(attachment)}
                           >
                             <Download className="h-4 w-4 mr-1" />
-                            Download
                           </Button>
                         </div>
                       </div>

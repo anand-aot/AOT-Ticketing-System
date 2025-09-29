@@ -1,4 +1,3 @@
-// src/components/CategoryOwnerDashboard.tsx
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -11,8 +10,9 @@ import {
   AlertTriangle, CheckCircle, Filter, Search, Timer, Target, Download, Shield
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useMediaQuery } from 'react-responsive';
 import { supabase } from '@/lib/supabase';
-import {  Ticket, User, TicketCategory, TicketStatus, TicketPriority, Attachment } from '@/types';
+import { Ticket, User, TicketCategory, TicketStatus, TicketPriority, Attachment } from '@/types';
 import { storageService } from '@/utils/storage';
 import { ROLE_CATEGORIES } from '@/lib/config';
 import ChatModal from '@/components/ChatModal';
@@ -43,6 +43,7 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
   const [escalationTicketId, setEscalationTicketId] = useState<string | null>(null);
   const ticketRefs = useRef<{ [ticketId: string]: HTMLDivElement | null }>({});
   const tabsContentRef = useRef<HTMLDivElement | null>(null);
+  const isMobile = useMediaQuery({ maxWidth: 767 });
   const isOwner = user.role === 'owner';
   const isCategoryOwner = ['hr_owner', 'it_owner', 'admin_owner', 'accounts_owner'].includes(user.role);
   const allowedCategories = storageService.getAllowedCategoriesForRole(user.role);
@@ -152,20 +153,6 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
         const parent = tabsContentRef.current;
         const ticketTop = ticketElement.offsetTop - 20;
         parent.scrollTo({ top: ticketTop, behavior: 'auto' });
-        console.log('Scroll details:', {
-          ticketId: expandedTicket,
-          ticketTop: ticketElement.offsetTop,
-          adjustedTop: ticketTop,
-          parentScrollTop: parent.scrollTop,
-          parentHeight: parent.clientHeight,
-          ticketHeight: ticketElement.offsetHeight,
-        });
-      } else {
-        console.warn('Scroll failed:', {
-          ticketElement: !!ticketElement,
-          parent: !!tabsContentRef.current,
-          expandedTicket,
-        });
       }
     }
   }, [expandedTicket]);
@@ -196,7 +183,7 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
   const avgResponseTime = ticketsWithResponseTime.length > 0
     ? ticketsWithResponseTime.reduce((sum, t) => sum + (t.responseTime || 0), 0) / ticketsWithResponseTime.length
     : 0;
-  const ticketsWithResolutionTime = tickets.filter((t) => t.resolutionTime);
+  const ticketsWithResolutionTime = tickets.filter((t) => t.status === 'Closed');
   const avgResolutionTime = ticketsWithResolutionTime.length > 0
     ? ticketsWithResolutionTime.reduce((sum, t) => sum + (t.resolutionTime || 0), 0) / ticketsWithResolutionTime.length
     : 0;
@@ -392,36 +379,49 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card/50 backdrop-blur supports-[backdrop-filter]:bg-card/50">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
+        <div className="container mx-auto px-4 sm:px-6 py-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 gradient-primary rounded-lg flex items-center justify-center">
-                <Users className="w-5 h-5 text-white" />
+              <div className="w-8 h-8 sm:w-10 sm:h-10 gradient-primary rounded-lg flex items-center justify-center">
+                <Users className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold">Welcome, {user.name}</h1>
-                <p className="text-sm text-muted-foreground">Category Owner - {category}</p>
+                <h1 className="text-lg sm:text-xl font-bold">Welcome, {user.name}</h1>
+                <p className="text-xs sm:text-sm text-muted-foreground">Category Owner - {category}</p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap justify-center sm:justify-end gap-2">
               <NotificationSystem user={user} />
               {user.verify_role_updater && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => window.location.href = '/role-update'}
+                  onClick={() => navigate('/role-update')}
                   className="flex items-center gap-2 bg-primary/10 border-primary/20 text-primary hover:bg-primary/20"
+                  aria-label="Role Management"
                 >
                   <Shield className="h-4 w-4" />
                   Role Management
                 </Button>
               )}
-              <Button variant="outline" onClick={handleExportTickets} className="gap-2">
-                <Download className="w-4 h-4" />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportTickets}
+                className="flex items-center gap-2"
+                aria-label="Export Tickets"
+              >
+                <Download className="h-4 w-4" />
                 Export
               </Button>
-              <Button variant="outline" onClick={onSignOut} className="gap-2">
-                <LogOut className="w-4 h-4" />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onSignOut}
+                className="flex items-center gap-2"
+                aria-label="Sign Out"
+              >
+                <LogOut className="h-4 w-4" />
                 Sign Out
               </Button>
             </div>
@@ -429,85 +429,88 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex gap-2 mb-8">
+      <div className="container mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        <div className="flex flex-wrap gap-2 sm:gap-4 mb-6 sm:mb-8 justify-center sm:justify-start">
           <Button
             variant={activeTab === 'dashboard' ? 'default' : 'outline'}
             onClick={() => setActiveTab('dashboard')}
-            className="gap-2"
+            className="flex-1 sm:flex-none flex items-center gap-2 min-w-[120px]"
+            aria-label="Dashboard"
           >
-            <TrendingUp className="w-4 h-4" />
+            <TrendingUp className="h-4 w-4" />
             Dashboard
           </Button>
           <Button
             variant={activeTab === 'tickets' ? 'default' : 'outline'}
             onClick={() => setActiveTab('tickets')}
-            className="gap-2"
+            className="flex-1 sm:flex-none flex items-center gap-2 min-w-[120px]"
+            aria-label={`Tickets (${totalTickets})`}
           >
-            <MessageSquare className="w-4 h-4" />
+            <MessageSquare className="h-4 w-4" />
             Tickets ({totalTickets})
           </Button>
           <Button
             variant={activeTab === 'analytics' ? 'default' : 'outline'}
             onClick={() => setActiveTab('analytics')}
-            className="gap-2"
+            className="flex-1 sm:flex-none flex items-center gap-2 min-w-[120px]"
+            aria-label="Analytics"
           >
-            <TrendingUp className="w-4 h-4" />
+            <TrendingUp className="h-4 w-4" />
             Analytics
           </Button>
         </div>
 
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Card>
-                <CardContent className="p-6">
+                <CardContent className="p-4 sm:p-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground">Total Tickets</p>
-                      <p className="text-2xl font-bold">{totalTickets}</p>
+                      <p className="text-xs sm:text-sm font-medium text-muted-foreground">Total Tickets</p>
+                      <p className="text-xl sm:text-2xl font-bold">{totalTickets}</p>
                     </div>
-                    <MessageSquare className="w-8 h-8 text-primary" />
+                    <MessageSquare className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
                   </div>
                 </CardContent>
               </Card>
               <Card>
-                <CardContent className="p-6">
+                <CardContent className="p-4 sm:p-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground">Open & Active</p>
-                      <p className="text-2xl font-bold text-warning">{openTickets + inProgressTickets}</p>
+                      <p className="text-xs sm:text-sm font-medium text-muted-foreground">Open & Active</p>
+                      <p className="text-xl sm:text-2xl font-bold text-warning">{openTickets + inProgressTickets}</p>
                     </div>
-                    <Clock className="w-8 h-8 text-warning" />
+                    <Clock className="w-6 h-6 sm:w-8 sm:h-8 text-warning" />
                   </div>
                 </CardContent>
               </Card>
               <Card>
-                <CardContent className="p-6">
+                <CardContent className="p-4 sm:p-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground">Escalated</p>
-                      <p className="text-2xl font-bold text-destructive">{escalatedTickets}</p>
+                      <p className="text-xs sm:text-sm font-medium text-muted-foreground">Escalated</p>
+                      <p className="text-xl sm:text-2xl font-bold text-destructive">{escalatedTickets}</p>
                     </div>
-                    <AlertTriangle className="w-8 h-8 text-destructive" />
+                    <AlertTriangle className="w-6 h-6 sm:w-8 sm:h-8 text-destructive" />
                   </div>
                 </CardContent>
               </Card>
               <Card>
-                <CardContent className="p-6">
+                <CardContent className="p-4 sm:p-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground">Resolved</p>
-                      <p className="text-2xl font-bold text-success">{closedTickets}</p>
+                      <p className="text-xs sm:text-sm font-medium text-muted-foreground">Resolved</p>
+                      <p className="text-xl sm:text-2xl font-bold text-success">{closedTickets}</p>
                     </div>
-                    <CheckCircle className="w-8 h-8 text-success" />
+                    <CheckCircle className="w-6 h-6 sm:w-8 sm:h-8 text-success" />
                   </div>
                 </CardContent>
               </Card>
             </div>
             <Card>
               <CardHeader>
-                <CardTitle>Ticket Status Distribution</CardTitle>
+                <CardTitle className="text-base sm:text-lg">Ticket Status Distribution</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -520,7 +523,7 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
                     const percentage = totalTickets > 0 ? (status.count / totalTickets) * 100 : 0;
                     return (
                       <div key={status.label} className="space-y-2">
-                        <div className="flex justify-between text-sm">
+                        <div className="flex justify-between text-xs sm:text-sm">
                           <span>{status.label}</span>
                           <span className="font-medium">{status.count} ({percentage.toFixed(1)}%)</span>
                         </div>
@@ -537,18 +540,18 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
 
         {activeTab === 'tickets' && (
           <div className="space-y-6">
-            <div className="flex flex-col lg:flex-row gap-4">
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   placeholder="Search tickets or employee names..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
+                  className="pl-10 w-full"
                 />
               </div>
               <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="w-full lg:w-48">
+                <SelectTrigger className="w-full sm:w-48 flex items-center">
                   <Filter className="w-4 h-4 mr-2" />
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
@@ -561,7 +564,7 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
                 </SelectContent>
               </Select>
               <Select value={filterPriority} onValueChange={setFilterPriority}>
-                <SelectTrigger className="w-full lg:w-48">
+                <SelectTrigger className="w-full sm:w-48 flex items-center">
                   <AlertTriangle className="w-4 h-4 mr-2" />
                   <SelectValue placeholder="Priority" />
                 </SelectTrigger>
@@ -575,22 +578,24 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
               </Select>
             </div>
             <Card>
-              <CardContent className="p-6 max-h-[calc(100vh-200px)] overflow-y-auto" ref={tabsContentRef}>
-                <TicketTable
-                  tickets={filteredTickets}
-                  user={user}
-                  assignableUsers={assignableUsersState}
-                  onUpdate={(ticketId, updates) =>
-                    setTickets((prev) =>
-                      prev.map((t) => (t.id === ticketId ? { ...t, ...updates } : t))
-                    )
-                  }
-                  onAssign={handleAssign}
-                  onEscalate={handleEscalateTicket}
-                  expandedTicket={expandedTicket}
-                  setExpandedTicket={setExpandedTicket}
-                  ticketRefs={ticketRefs}
-                />
+              <CardContent className="p-4 sm:p-6 max-h-[calc(100vh-200px)] overflow-y-auto" ref={tabsContentRef}>
+                <div className={isMobile ? 'overflow-x-auto' : ''}>
+                  <TicketTable
+                    tickets={filteredTickets}
+                    user={user}
+                    assignableUsers={assignableUsersState}
+                    onUpdate={(ticketId, updates) =>
+                      setTickets((prev) =>
+                        prev.map((t) => (t.id === ticketId ? { ...t, ...updates } : t))
+                      )
+                    }
+                    onAssign={handleAssign}
+                    onEscalate={handleEscalateTicket}
+                    expandedTicket={expandedTicket}
+                    setExpandedTicket={setExpandedTicket}
+                    ticketRefs={ticketRefs}
+                  />
+                </div>
               </CardContent>
             </Card>
             {escalationTicketId && (
@@ -612,51 +617,51 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
 
         {activeTab === 'analytics' && (
           <div className="space-y-6">
-            <div className="grid lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
               <Card>
-                <CardHeader className="pb-4">
-                  <CardTitle className="flex items-center gap-2">
-                    <Timer className="w-5 h-5" />
+                <CardHeader className="pb-2 sm:pb-4">
+                  <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                    <Timer className="w-4 h-4 sm:w-5 sm:h-5" />
                     Avg Response Time
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold text-primary">
+                  <div className="text-xl sm:text-3xl font-bold text-primary">
                     {avgResponseTime.toFixed(1)}h
                   </div>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-xs sm:text-sm text-muted-foreground">
                     Based on {ticketsWithResponseTime.length} tickets
                   </p>
                 </CardContent>
               </Card>
               <Card>
-                <CardHeader className="pb-4">
-                  <CardTitle className="flex items-center gap-2">
-                    <CheckCircle className="w-5 h-5" />
+                <CardHeader className="pb-2 sm:pb-4">
+                  <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                    <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5" />
                     Avg Resolution Time
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold text-success">
+                  <div className="text-xl sm:text-3xl font-bold text-success">
                     {avgResolutionTime.toFixed(1)}h
                   </div>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-xs sm:text-sm text-muted-foreground">
                     Based on {ticketsWithResolutionTime.length} resolved tickets
                   </p>
                 </CardContent>
               </Card>
               <Card>
-                <CardHeader className="pb-4">
-                  <CardTitle className="flex items-center gap-2">
-                    <Target className="w-5 h-5" />
+                <CardHeader className="pb-2 sm:pb-4">
+                  <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                    <Target className="w-4 h-4 sm:w-5 sm:h-5" />
                     Customer Satisfaction
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold text-warning">
+                  <div className="text-xl sm:text-3xl font-bold text-warning">
                     {avgRating.toFixed(1)}/5
                   </div>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-xs sm:text-sm text-muted-foreground">
                     Based on {ticketsWithRating.length} ratings
                   </p>
                 </CardContent>
@@ -664,24 +669,25 @@ const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: Categ
             </div>
             <Card>
               <CardHeader>
-                <CardTitle>Ticket Status Distribution</CardTitle>
+                <CardTitle className="text-base sm:text-lg">Ticket Status Distribution</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                <ResponsiveContainer width="100%" height={isMobile ? 200 : 300}>
+                  <BarChart data={chartData} margin={{ top: 20, right: 10, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="name" stroke="#6b7280" />
-                    <YAxis stroke="#6b7280" />
+                    <XAxis dataKey="name" stroke="#6b7280" tick={{ fontSize: isMobile ? 10 : 12 }} />
+                    <YAxis stroke="#6b7280" tick={{ fontSize: isMobile ? 10 : 12 }} />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: '#ffffff',
                         border: '1px solid #e5e7eb',
                         borderRadius: '8px',
                         boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                        fontSize: isMobile ? '12px' : '14px',
                       }}
                     />
-                    <Legend />
-                    <Bar dataKey="count" name="Tickets" barSize={50}>
+                    <Legend wrapperStyle={{ fontSize: isMobile ? 12 : 14 }} />
+                    <Bar dataKey="count" name="Tickets" barSize={isMobile ? 30 : 50}>
                       {chartData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.fill} />
                       ))}

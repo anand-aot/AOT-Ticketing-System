@@ -18,13 +18,7 @@ export const ROLE_CATEGORIES: Record<Role, string> = {
   owner: 'Management',
 };
 
-export const CATEGORY_TO_ROLE: Record<TicketCategory, Role> = {
-  'IT Infrastructure': 'it_owner',
-  'HR': 'hr_owner',
-  'Administration': 'admin_owner',
-  'Accounts': 'accounts_owner',
-  'Others': 'hr_owner',
-};
+
 export async function getRoleForPermissionUser(email: string): Promise<Role | null> {
   try {
     const cleanEmail = email.toLowerCase().replace(/^eq\./, ''); // Remove 'eq.' prefix if present
