@@ -1,202 +1,93 @@
-import React, { useState } from 'react';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertTriangle } from 'lucide-react';
-import { Ticket, storageService } from '@/utils/storage';
-import { toast } from '@/hooks/use-toast';
+// src/components/EscalationModal.tsx
+import { useState } from 'react';
+import { storageService } from '@/utils/storage';
+import { Ticket, User } from '@/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabase';
+import { X } from 'lucide-react';
 
 interface EscalationModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  ticket: Ticket | null;
-  escalatedBy: string;
+  ticket: Ticket;
+  user: User;
+  onEscalated: () => void;
 }
 
-export const EscalationModal: React.FC<EscalationModalProps> = ({
-  isOpen,
-  onClose,
-  ticket,
-  escalatedBy
-}) => {
+export default function EscalationModal({ ticket, user, onEscalated }: EscalationModalProps) {
   const [reason, setReason] = useState('');
   const [description, setDescription] = useState('');
   const [timeline, setTimeline] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+    const [open, setOpen] = useState(false);
+  const { toast } = useToast();
 
-  const resetForm = () => {
-    setReason('');
-    setDescription('');
-    setTimeline('');
-  };
-
-  const handleClose = () => {
-    resetForm();
-    onClose();
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!ticket || !reason.trim() || !description.trim() || !timeline.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Please fill in all fields",
-        variant: "destructive"
-      });
+  const handleEscalate = async () => {
+    if (!reason || !timeline) {
+      toast({ title: 'Error', description: 'Reason and timeline are required', variant: 'destructive' });
       return;
     }
 
-    setIsSubmitting(true);
-
     try {
-      storageService.escalateTicket(
-        ticket.id,
-        reason.trim(),
-        description.trim(),
-        timeline.trim(),
-        escalatedBy
-      );
-
-      toast({
-        title: "Ticket Escalated",
-        description: `Ticket ${ticket.id} has been escalated successfully`,
-        variant: "default"
+      await storageService.addEscalation({
+        ticketId: ticket.id.toString(),
+        reason,
+        description,
+        timeline,
+        escalatedBy: user.email,
+        resolved: false,
       });
-
-      handleClose();
-      
-      // Reload the page to refresh the data
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
-      
-    } catch (error) {
-      toast({
-        title: "Escalation Failed",
-        description: "Failed to escalate the ticket. Please try again.",
-        variant: "destructive"
+      await storageService.updateTicket(ticket.id, {
+        status: 'Escalated',
+        escalationReason: reason,
+        escalationDate: new Date().toISOString(),
+      }, user.email);
+      onEscalated();
+      toast({ title: 'Success', description: 'Ticket escalated' });
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: `EscalationModal: escalate ticket, ticketId=${ticket.id}`,
       });
-    } finally {
-      setIsSubmitting(false);
+      toast({ title: 'Error', description: 'Failed to escalate ticket', variant: 'destructive' });
     }
   };
 
-  const reasonOptions = [
-    'Technical Complexity Beyond Team Capability',
-    'Resource Constraints',
-    'Customer VIP Status',
-    'Business Critical Impact',
-    'SLA Violation Risk',
-    'Management Request',
-    'Compliance/Legal Requirements',
-    'Budget Approval Required',
-    'Cross-Department Coordination Needed',
-    'Other'
-  ];
-
-  const timelineOptions = [
-    'Immediate (Within 1 hour)',
-    'Urgent (Within 4 hours)',
-    'Same Day (Within 8 hours)',
-    'Next Business Day',
-    'Within 48 hours',
-    'Within 1 week',
-    'Custom Timeline'
-  ];
-
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-md">
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button>Escalate</Button>
+      </DialogTrigger>
+      <DialogContent>
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-orange-500" />
-            Escalate Ticket
-          </DialogTitle>
+          <DialogTitle>Escalate Ticket #{ticket.id.toString().slice(0, 8)}</DialogTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-2 right-2 text-muted-foreground bg- hover:text-foreground hover:bg-muted/30 transition-colors"
+            onClick={() => setOpen(false)}
+            aria-label="Close chat modal"
+          >
+            <X className="h-5 w-5" />
+          </Button>
         </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {ticket && (
-            <div className="p-3 bg-gray-50 rounded-lg mb-4">
-              <p className="text-sm font-medium">{ticket.id}: {ticket.subject}</p>
-              <p className="text-xs text-muted-foreground">
-                Priority: {ticket.priority} | Category: {ticket.category}
-              </p>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label htmlFor="reason">Escalation Reason *</Label>
-            <Select value={reason} onValueChange={setReason} required>
-              <SelectTrigger>
-                <SelectValue placeholder="Select escalation reason" />
-              </SelectTrigger>
-              <SelectContent>
-                {reasonOptions.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Reason</label>
+            <Input value={reason} placeholder="Enter escalation reason (e.g., Urgent resolution needed)" onChange={(e) => setReason(e.target.value)} required />
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="description">Detailed Description *</Label>
-            <Textarea
-              id="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Provide detailed explanation of why this ticket needs escalation..."
-              rows={4}
-              required
-            />
+          <div>
+            <label className="block text-sm font-medium mb-2">Description</label>
+            <Textarea value={description} placeholder="Enter additional details (optional)" onChange={(e) => setDescription(e.target.value)} />
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="timeline">Expected Resolution Timeline *</Label>
-            <Select value={timeline} onValueChange={setTimeline} required>
-              <SelectTrigger>
-                <SelectValue placeholder="Select expected timeline" />
-              </SelectTrigger>
-              <SelectContent>
-                {timelineOptions.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div>
+            <label className="block text-sm font-medium mb-2">Timeline</label>
+            <Input value={timeline} placeholder="Enter expected resolution timeline (e.g., 2 days)" onChange={(e) => setTimeline(e.target.value)} required />
           </div>
-
-          <div className="flex gap-3 pt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleClose}
-              className="flex-1"
-              disabled={isSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              className="flex-1"
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? 'Escalating...' : 'Escalate Ticket'}
-            </Button>
-          </div>
-        </form>
+          <Button onClick={handleEscalate}>Submit</Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
-};
+}

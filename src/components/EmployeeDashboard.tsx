@@ -1,540 +1,343 @@
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, MessageSquare, Clock, User as UserIcon, LogOut, Filter, Search, Star, Download, LayoutGrid, List } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
-import { storageService, type Ticket, type User } from "@/utils/storage";
-import ChatModal from "./ChatModal";
-import NotificationSystem from "./NotificationSystem";
-import { JiraStyleBoard } from "./JiraStyleBoard";
+import { useState, useEffect, useMemo } from 'react';
+import { storageService } from '@/utils/storage';
+import { Ticket, User, TicketCategory, TicketStatus, TicketPriority, Attachment } from '@/types';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useToast } from '@/hooks/use-toast';
+import { useMediaQuery } from 'react-responsive';
+import { Link } from 'react-router-dom';
+import { LogOut, AlertCircle, User as UserIcon } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import JiraStyleDashboard from '@/components/JiraStyleBoard';
+import TicketForm from '@/components/TicketForm';
+import TicketTable from '@/components/TicketTable';
+import NotificationSystem from '@/components/NotificationSystem';
 
 interface EmployeeDashboardProps {
   user: User;
-  onLogout: () => void;
+  onSignOut: () => void;
 }
 
-const EmployeeDashboard = ({ user, onLogout }: EmployeeDashboardProps) => {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "create">("dashboard");
+export default function EmployeeDashboard({ user: initialUser, onSignOut }: EmployeeDashboardProps) {
+  const [user, setUser] = useState<User>(initialUser);
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [ticketRating, setTicketRating] = useState<{ [key: string]: number }>({});
-  const [isMobile, setIsMobile] = useState(false);
-  const [attachments, setAttachments] = useState<File[]>([]);
-  const [viewMode, setViewMode] = useState<"board" | "list">("board");
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'create'>('dashboard');
+  const [filterStatus, setFilterStatus] = useState<TicketStatus | 'All'>('All');
+  const [searchQuery, setSearchQuery] = useState('');
   const { toast } = useToast();
+  const isDesktop = useMediaQuery({ minWidth: 768 });
+  const pageSize = 20;
+  const isOwner = user.role === 'owner' || user.role === 'hr_owner';
 
-  const [newTicket, setNewTicket] = useState({
-    subject: "",
-    description: "",
-    category: "IT Infrastructure" as Ticket["category"],
-    priority: "Medium" as Ticket["priority"],
-  });
+  // Check if profile is complete
+  const isProfileComplete = Boolean(user.employeeId && user.sub_department);
 
+  // Watch for profile completion changes and refresh user data
   useEffect(() => {
-    loadTickets();
-    
-    // Check if mobile
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    
-    // Set up SLA checking interval
-    const slaInterval = setInterval(() => {
-      storageService.checkSLAViolations();
-      storageService.checkPendingReminders();
-    }, 60000); // Check every minute
-    
-    return () => {
-      window.removeEventListener('resize', checkMobile);
-      clearInterval(slaInterval);
-    };
+    async function refreshUser() {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session?.user) {
+          const email = sessionData.session.user.email?.toLowerCase();
+          const name =
+            sessionData.session.user.user_metadata?.full_name ||
+            sessionData.session.user.user_metadata?.name ||
+            email ||
+            'Unknown';
+          const googleId = sessionData.session.user.id;
+          const supabaseUser = await storageService.getOrCreateUser(email, name, googleId);
+          if (supabaseUser) {
+            const appUser = {
+              id: supabaseUser.id,
+              google_id: supabaseUser.google_id,
+              email: supabaseUser.email,
+              name: supabaseUser.name,
+              role: supabaseUser.role,
+              employeeId: supabaseUser.employeeId || supabaseUser.employee_id || null,
+              department: supabaseUser.department || null,
+              sub_department: supabaseUser.sub_department || null,
+              created_at: supabaseUser.created_at,
+              updated_at: supabaseUser.updated_at,
+              verify_role_updater: supabaseUser.verify_role_updater,
+            };
+            setUser(appUser);
+          }
+        }
+      } catch (error: any) {
+        await supabase.from('error_logs').insert({
+          error_message: error.message,
+          context: `EmployeeDashboard: refresh user, email=${user.email}`,
+        });
+      }
+    }
+
+    // Refresh user data on mount and when navigating back
+    refreshUser();
   }, [user.email]);
 
-  const loadTickets = () => {
-    const userTickets = storageService.getTicketsByEmployee(user.email);
-    setTickets(userTickets);
+  useEffect(() => {
+    async function fetchTickets() {
+      try {
+        const [fetchedTickets, totalCount] = await Promise.all([
+          storageService.getTicketsByEmployee(user.email, page, pageSize),
+          storageService.getTicketCountByEmployee(user.email),
+        ]);
+        if (!Array.isArray(fetchedTickets)) {
+          await supabase.from('error_logs').insert({
+            error_message: 'Fetched tickets is not an array',
+            context: `EmployeeDashboard: fetch tickets, email=${user.email}, page=${page}`,
+          });
+          setTickets([]);
+          setTotalPages(1);
+          return;
+        }
+        setTickets(fetchedTickets);
+        setTotalPages(Math.ceil((totalCount || 0) / pageSize) || 1);
+      } catch (error: any) {
+        await supabase.from('error_logs').insert({
+          error_message: error.message,
+          context: `EmployeeDashboard: fetch tickets, email=${user.email}, page=${page}`,
+        });
+        toast({ title: 'Error', description: 'Failed to load tickets', variant: 'destructive' });
+        setTickets([]);
+        setTotalPages(1);
+      }
+    }
+    fetchTickets();
+  }, [user.email, page, toast]);
+
+  const filteredTickets = useMemo(() => {
+    return tickets.filter((ticket) => {
+      const matchesStatus = filterStatus === 'All' || ticket.status === filterStatus;
+      const matchesSearch =
+        ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        ticket.description.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesStatus && matchesSearch;
+    });
+  }, [tickets, filterStatus, searchQuery]);
+
+  const handleUpdate = async (ticketId: string, updates: Partial<Ticket>) => {
+    try {
+      await storageService.updateTicket(ticketId, updates, user.email);
+      setTickets(tickets.map((t) => (t.id === ticketId ? { ...t, ...updates } : t)));
+      if (updates.category) {
+        const response = await storageService.getTicketsByCategory(updates.category, page, pageSize);
+        setTickets(response.tickets || []);
+        setTotalPages(Math.ceil((response.totalCount || 0) / pageSize) || 1);
+      }
+      toast({ title: 'Success', description: 'Ticket updated' });
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: `EmployeeDashboard: update ticket, ticketId=${ticketId}`,
+      });
+      toast({ title: 'Error', description: 'Failed to update ticket', variant: 'destructive' });
+    }
   };
 
-  const filteredTickets = tickets.filter(ticket => {
-    const matchesStatus = filterStatus === "all" || ticket.status.toLowerCase() === filterStatus;
-    const matchesSearch = ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         ticket.description.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesStatus && matchesSearch;
-  });
-
-  // Organize tickets by status for Jira-style board
-  const ticketsByStatus = filteredTickets.reduce((acc, ticket) => {
-    const status = ticket.status;
-    if (!acc[status]) {
-      acc[status] = [];
-    }
-    acc[status].push(ticket);
-    return acc;
-  }, {} as Record<string, Ticket[]>);
-
-  // Ensure all statuses are present
-  const allStatuses = ["Open", "In Progress", "Escalated", "Closed"];
-  const organizedTickets = allStatuses.reduce((acc, status) => {
-    acc[status] = ticketsByStatus[status] || [];
-    return acc;
-  }, {} as Record<string, Ticket[]>);
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case "Critical": return "bg-priority-critical text-white";
-      case "High": return "bg-priority-high text-white";
-      case "Medium": return "bg-priority-medium text-white";
-      case "Low": return "bg-priority-low text-white";
-      default: return "bg-muted";
-    }
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Open": return "bg-info/10 text-info border-info/20";
-      case "In Progress": return "bg-warning/10 text-warning border-warning/20";
-      case "Escalated": return "bg-destructive/10 text-destructive border-destructive/20";
-      case "Closed": return "bg-success/10 text-success border-success/20";
-      default: return "bg-muted";
+  const handleFormSubmit = () => {
+    setActiveTab('dashboard');
+    async function fetchTickets() {
+      try {
+        const [fetchedTickets, totalCount] = await Promise.all([
+          storageService.getTicketsByEmployee(user.email, page, pageSize),
+          storageService.getTicketCountByEmployee(user.email),
+        ]);
+        setTickets(fetchedTickets);
+        setTotalPages(Math.ceil((totalCount || 0) / pageSize) || 1);
+      } catch (error: any) {
+        await supabase.from('error_logs').insert({
+          error_message: error.message,
+          context: `EmployeeDashboard: refresh tickets, email=${user.email}, page=${page}`,
+        });
+      }
     }
+    fetchTickets();
   };
 
-  const handleCreateTicket = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTicket.subject || !newTicket.description) {
+  const handleTabChange = (value: string) => {
+    if (value === 'create' && !isProfileComplete) {
       toast({
-        title: "Error",
-        description: "Please fill in all required fields",
-        variant: "destructive",
+        title: 'Profile Incomplete',
+        description: 'Please complete your profile by filling in Employee ID and Sub-Department before creating tickets.',
+        variant: 'destructive',
       });
       return;
     }
-
-    const ticket = storageService.addTicket({
-      ...newTicket,
-      employeeId: user.employeeId,
-      employeeName: user.name,
-      employeeEmail: user.email,
-      status: "Open"
-    });
-
-    setNewTicket({ 
-      subject: "", 
-      description: "", 
-      category: "IT Infrastructure", 
-      priority: "Medium" 
-    });
-    setActiveTab("dashboard");
-    loadTickets();
-    
-    toast({
-      title: "Ticket Created",
-      description: `Ticket ${ticket.id} has been created successfully`,
-    });
+    setActiveTab(value as 'dashboard' | 'create');
   };
 
-  const handleRateTicket = (ticketId: string, rating: number) => {
-    storageService.updateTicket(ticketId, { rating });
-    setTicketRating({ ...ticketRating, [ticketId]: rating });
-    loadTickets();
-    
-    toast({
-      title: "Rating Submitted",
-      description: "Thank you for your feedback!",
-    });
-  };
-
-  const handleOpenChat = (ticket: Ticket) => {
-    setSelectedTicket(ticket);
-    setIsChatOpen(true);
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const newFiles = Array.from(e.target.files);
-      
-      // Validate files
-      const validFiles: File[] = [];
-      for (const file of newFiles) {
-        const validation = storageService.validateFile(file);
-        if (validation.isValid) {
-          validFiles.push(file);
-        } else {
-          toast({
-            title: "Invalid File",
-            description: `${file.name}: ${validation.error}`,
-            variant: "destructive"
-          });
-        }
-      }
-      
-      setAttachments(prev => [...prev, ...validFiles]);
+  const handleCreateTicketClick = () => {
+    if (!isProfileComplete) {
+      toast({
+        title: 'Profile Incomplete',
+        description: 'Please complete your profile first',
+        variant: 'destructive',
+      });
+    } else {
+      setActiveTab('create');
     }
   };
-
-  const removeAttachment = (index: number) => {
-    setAttachments(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-
-  const renderRating = (ticket: Ticket) => {
-    if (ticket.status !== "Closed") return null;
-    
-    const currentRating = ticket.rating || ticketRating[ticket.id] || 0;
-    
-    if (currentRating > 0) {
-      return (
-        <div className="flex items-center gap-1 mt-2">
-          <span className="text-sm text-muted-foreground mr-2">Your Rating:</span>
-          {[1, 2, 3, 4, 5].map((star) => (
-            <Star
-              key={star}
-              className={cn("w-4 h-4", star <= currentRating ? "fill-warning text-warning" : "text-muted-foreground")}
-            />
-          ))}
-        </div>
-      );
-    }
-
-    return (
-      <div className="mt-2 p-2 bg-muted rounded-lg">
-        <p className="text-sm text-muted-foreground mb-2">Rate this ticket:</p>
-        <div className="flex items-center gap-1">
-          {[1, 2, 3, 4, 5].map((star) => (
-            <Star
-              key={star}
-              className="w-5 h-5 cursor-pointer text-muted-foreground hover:text-warning transition-colors"
-              onClick={() => handleRateTicket(ticket.id, star)}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  // Stats
-  const totalTickets = tickets.length;
-  const openTickets = tickets.filter(t => t.status === "Open").length;
-  const inProgressTickets = tickets.filter(t => t.status === "In Progress").length;
-  const closedTickets = tickets.filter(t => t.status === "Closed").length;
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b bg-card/50 backdrop-blur supports-[backdrop-filter]:bg-card/50">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 gradient-primary rounded-lg flex items-center justify-center">
-                <UserIcon className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold">Welcome, {user.name}</h1>
-                <p className="text-sm text-muted-foreground">Employee Dashboard</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <NotificationSystem user={user} />
-              <Button variant="outline" onClick={onLogout} className="gap-2">
-                <LogOut className="w-4 h-4" />
-                Sign Out
-              </Button>
+    <div className="container mx-auto p-4">
+      <h1 className="text-3xl font-bold mb-6">Employee Dashboard</h1>
+
+      {/* Profile incomplete warning banner */}
+      {!isProfileComplete && (
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-md p-4">
+          <div className="flex items-center">
+            <AlertCircle className="h-5 w-5 text-amber-600 mr-3" />
+            <div>
+              <h3 className="text-sm font-medium text-amber-800">Profile Incomplete</h3>
+              <p className="text-sm text-amber-700 mt-1">
+                Please complete your profile by adding your Employee ID and Sub-Department to access all features.
+              </p>
+              <Link to="/profile">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 border-amber-300 hover:bg-amber-100"
+                >
+                  <UserIcon className="h-4 w-4 mr-1" />
+                  Complete Profile
+                </Button>
+              </Link>
             </div>
           </div>
         </div>
-      </header>
+      )}
 
-      <div className="container mx-auto px-4 py-8">
-        {/* Quick Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-primary">{totalTickets}</div>
-                <div className="text-sm text-muted-foreground">Total Tickets</div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-info">{openTickets}</div>
-                <div className="text-sm text-muted-foreground">Open</div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-warning">{inProgressTickets}</div>
-                <div className="text-sm text-muted-foreground">In Progress</div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-success">{closedTickets}</div>
-                <div className="text-sm text-muted-foreground">Resolved</div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Navigation Tabs */}
-        <div className="flex gap-2 mb-8">
-          <Button
-            variant={activeTab === "dashboard" ? "default" : "outline"}
-            onClick={() => setActiveTab("dashboard")}
-            className="gap-2"
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          <TabsTrigger
+            value="create"
+            disabled={!isProfileComplete}
+            className={!isProfileComplete ? 'opacity-50 cursor-not-allowed' : ''}
           >
-            <MessageSquare className="w-4 h-4" />
-            My Tickets ({totalTickets})
-          </Button>
-          <Button
-            variant={activeTab === "create" ? "default" : "outline"}
-            onClick={() => setActiveTab("create")}
-            className="gap-2"
-          >
-            <Plus className="w-4 h-4" />
             Create Ticket
-          </Button>
+            {!isProfileComplete && <span className="ml-1 text-xs">🔒</span>}
+          </TabsTrigger>
+        </TabsList>
+
+        <div className="flex justify-between items-center mb-4">
+          <div className="flex space-x-2">
+            <Input
+              placeholder="Search tickets..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-64 border-primary/20"
+            />
+            <Select value={filterStatus} onValueChange={(value) => setFilterStatus(value as TicketStatus | 'All')}>
+              <SelectTrigger className="w-[180px] border-primary/20">
+                <SelectValue placeholder="Filter by Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="All">All Statuses</SelectItem>
+                {['Open', 'In Progress', 'Escalated', 'Closed'].map((status) => (
+                  <SelectItem key={status} value={status}>{status}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex space-x-2">
+            <NotificationSystem
+              user={user}
+              onNotificationClick={(ticketId) => {
+                if (ticketId) {
+                  window.location.href = `/ticket/${ticketId}`;
+                }
+              }}
+            />
+            <Link to="/profile">
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-primary/20 hover:bg-muted/30 transition-colors"
+              >
+                <UserIcon className="h-4 w-4 mr-1" />
+                Profile
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-primary/20 hover:bg-muted/30 transition-colors"
+              onClick={onSignOut}
+            >
+              <LogOut className="h-4 w-4 mr-1" />
+              Sign Out
+            </Button>
+          </div>
         </div>
 
-        {activeTab === "dashboard" && (
-          <div className="space-y-6">
-            {/* Filters and View Toggle */}
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search tickets..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="w-full sm:w-48">
-                  <Filter className="w-4 h-4 mr-2" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="open">Open</SelectItem>
-                  <SelectItem value="in progress">In Progress</SelectItem>
-                  <SelectItem value="escalated">Escalated</SelectItem>
-                  <SelectItem value="closed">Closed</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="flex gap-2">
-                <Button
-                  variant={viewMode === "board" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setViewMode("board")}
-                  className="gap-2"
-                >
-                  <LayoutGrid className="w-4 h-4" />
-                  Board
-                </Button>
-                <Button
-                  variant={viewMode === "list" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setViewMode("list")}
-                  className="gap-2"
-                >
-                  <List className="w-4 h-4" />
-                  List
-                </Button>
-              </div>
-            </div>
-
-            {/* Tickets Display */}
-            {filteredTickets.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <MessageSquare className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-medium mb-2">No tickets found</h3>
-                  <p className="text-muted-foreground mb-4">
-                    {searchQuery || filterStatus !== "all" 
-                      ? "Try adjusting your search or filters"
-                      : "Create your first ticket to get started"
-                    }
-                  </p>
-                  {!searchQuery && filterStatus === "all" && (
-                    <Button onClick={() => setActiveTab("create")} className="gap-2">
-                      <Plus className="w-4 h-4" />
-                      Create Ticket
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            ) : viewMode === "board" ? (
-              <div className="min-h-[600px]">
-                <JiraStyleBoard
-                  tickets={organizedTickets}
-                  onTicketClick={handleOpenChat}
+        <TabsContent value="dashboard">
+          {isOwner ? (
+            <Card className="border-primary/20 shadow-md">
+              <CardHeader className="bg-gradient-to-r from-primary/10 to-muted/50">
+                <CardTitle className="text-lg font-semibold text-foreground">Employee Dashboard</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {isDesktop && <JiraStyleDashboard user={user} tickets={tickets} onUpdate={handleUpdate} isMobile={!isDesktop} />}
+                <TicketTable
                   user={user}
-                  isMobile={isMobile}
+                  tickets={tickets}
+                  onUpdate={handleUpdate}
+                  onPageChange={handlePageChange}
+                  totalPages={totalPages}
                 />
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {filteredTickets.map((ticket) => (
-                  <Card key={ticket.id} className="hover:shadow-md transition-shadow">
-                    <CardContent className="p-6">
-                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <Badge variant="outline" className="font-mono">
-                              {ticket.id}
-                            </Badge>
-                            <Badge className={getPriorityColor(ticket.priority)}>
-                              {ticket.priority}
-                            </Badge>
-                            <Badge className={getStatusColor(ticket.status)}>
-                              {ticket.status}
-                            </Badge>
-                          </div>
-                          <h3 className="font-semibold text-lg mb-2">{ticket.subject}</h3>
-                          <p className="text-muted-foreground mb-2">{ticket.description}</p>
-                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              <Clock className="w-4 h-4" />
-                              {new Date(ticket.createdAt).toLocaleDateString()}
-                            </span>
-                            <span>Category: {ticket.category}</span>
-                          </div>
-                          {renderRating(ticket)}
-                        </div>
-                        <div className="flex gap-2">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="gap-2"
-                            onClick={() => handleOpenChat(ticket)}
-                          >
-                            <MessageSquare className="w-4 h-4" />
-                            Chat {ticket.messages.length > 0 && `(${ticket.messages.length})`}
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+              </CardContent>
+            </Card>
+          ) : (
+            <JiraStyleDashboard user={user} tickets={filteredTickets} onUpdate={handleUpdate} isMobile={!isDesktop} />
+          )}
+        </TabsContent>
 
-        {activeTab === "create" && (
-          <Card className="max-w-2xl">
-            <CardHeader>
-              <CardTitle>Create New Ticket</CardTitle>
-              <CardDescription>
-                Submit a new support request for IT, HR, Administration, or Accounts assistance
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleCreateTicket} className="space-y-6">
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Category *</label>
-                    <Select value={newTicket.category} onValueChange={(value: Ticket["category"]) => setNewTicket({...newTicket, category: value})}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="IT Infrastructure">IT Infrastructure</SelectItem>
-                        <SelectItem value="HR">HR</SelectItem>
-                        <SelectItem value="Administration">Administration</SelectItem>
-                        <SelectItem value="Accounts">Accounts</SelectItem>
-                        <SelectItem value="Others">Others</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Priority</label>
-                    <Select value={newTicket.priority} onValueChange={(value: Ticket["priority"]) => setNewTicket({...newTicket, priority: value})}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Low">Low</SelectItem>
-                        <SelectItem value="Medium">Medium</SelectItem>
-                        <SelectItem value="High">High</SelectItem>
-                        <SelectItem value="Critical">Critical</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Subject *</label>
-                  <Input
-                    placeholder="Brief description of the issue"
-                    value={newTicket.subject}
-                    onChange={(e) => setNewTicket({...newTicket, subject: e.target.value})}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Description *</label>
-                  <Textarea
-                    placeholder="Provide detailed information about your request..."
-                    rows={5}
-                    value={newTicket.description}
-                    onChange={(e) => setNewTicket({...newTicket, description: e.target.value})}
-                  />
-                </div>
-
-                <div className="flex gap-3 pt-4">
-                  <Button type="submit" className="gap-2">
-                    <Plus className="w-4 h-4" />
-                    Create Ticket
+        <TabsContent value="create">
+          {isProfileComplete ? (
+            <Card className="border-primary/20 shadow-md">
+              <CardHeader className="bg-gradient-to-r from-primary/10 to-muted/50">
+                <CardTitle className="text-lg font-semibold text-foreground">Create New Ticket</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <TicketForm user={user} onSubmit={handleFormSubmit} />
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="border-primary/20 shadow-md">
+              <CardHeader className="bg-gradient-to-r from-primary/10 to-muted/50">
+                <CardTitle className="text-lg font-semibold text-foreground">Profile Required</CardTitle>
+              </CardHeader>
+              <CardContent className="text-center py-8">
+                <AlertCircle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
+                <h3 className="text-lg font-medium mb-2">Complete Your Profile</h3>
+                <p className="text-muted-foreground mb-4">
+                  You need to complete your profile with Employee ID and Sub-Department before creating tickets.
+                </p>
+                <Link to="/profile">
+                  <Button
+                    variant="outline"
+                    className="border-primary/20 hover:bg-muted/30 transition-colors"
+                  >
+                    <UserIcon className="h-4 w-4 mr-2" />
+                    Complete Profile
                   </Button>
-                  <Button type="button" variant="outline" onClick={() => setActiveTab("dashboard")}>
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      <ChatModal
-        ticket={selectedTicket}
-        user={user}
-        isOpen={isChatOpen}
-        onClose={() => {
-          setIsChatOpen(false);
-          setSelectedTicket(null);
-          loadTickets(); // Refresh to get updated message counts
-        }}
-      />
+                </Link>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
-};
-
-export default EmployeeDashboard;
+}

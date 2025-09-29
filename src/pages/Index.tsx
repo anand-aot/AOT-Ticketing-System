@@ -1,527 +1,275 @@
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { TicketPlus, Users, BarChart3, MessageSquare, Clock, CheckCircle, Shield, Zap, Target, Star, ArrowRight, Globe, Award } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import EmployeeDashboard from "@/components/EmployeeDashboard";
-import CategoryOwnerDashboard from "@/components/CategoryOwnerDashboard";
-import HRAdminDashboard from "@/components/HRAdminDashboard";
-import heroImage from "@/assets/hero-dashboard.jpg";
-import { storageService, getUserRole, type User } from "@/utils/storage";
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { storageService } from '@/utils/storage';
+import { User } from '@/types';
+import { useToast } from '@/hooks/use-toast';
+import { getRoleForPermissionUser, CONFIG } from '@/lib/config';
+import EmployeeDashboard from '@/components/EmployeeDashboard';
+import CategoryOwnerDashboard from '@/components/CategoryOwnerDashboard';
+import HRAdminDashboard from '@/components/HRAdminDashboard';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Loader2, Shield, Users, Ticket, BarChart } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import faviconSrc from '../../public/favicon.ico';
 
-const Index = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [email, setEmail] = useState("");
+export default function Index() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Initialize storage and check for existing session
   useEffect(() => {
-    storageService.initializeData();
-    const existingUser = storageService.getCurrentUser();
-    if (existingUser) {
-      setCurrentUser(existingUser);
-    }
-  }, []);
+    async function initializeAuth() {
+      setIsLoading(true);
+      try {
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          throw new Error(`Session error: ${sessionError.message}`);
+        }
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email) {
-      toast({
-        title: "Error",
-        description: "Please enter your email address",
-        variant: "destructive",
+        if (sessionData.session && sessionData.session.user) {
+          const { email, id: googleId, user_metadata } = sessionData.session.user;
+          const name = user_metadata?.full_name || user_metadata?.name || email || 'Unknown';
+          if (email && googleId) {
+            const cleanEmail = email.toLowerCase().replace(/^eq\./, '');
+            const fetchedUser = await storageService.getOrCreateUser(cleanEmail, name, googleId);
+            const permissionRole = await getRoleForPermissionUser(cleanEmail);
+            const finalRole = permissionRole && CONFIG.AVAILABLE_ROLES.includes(permissionRole) ? permissionRole : fetchedUser.role;
+            const finalUser = { ...fetchedUser, role: finalRole };
+            setUser(finalUser);
+          } else {
+            throw new Error('Invalid session data: missing email or googleId');
+          }
+        } else {
+          setIsLoading(false);
+        }
+      } catch (error: any) {
+        await supabase.from('error_logs').insert({
+          error_message: error.message,
+          context: 'initializeAuth',
+        });
+        toast({
+          title: 'Error',
+          description: 'Failed to initialize authentication',
+          variant: 'destructive',
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    initializeAuth();
+  }, [navigate, toast]);
+
+  const handleSignIn = async () => {
+    setIsAuthenticating(true);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/google/callback`,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+        },
       });
-      return;
-    }
 
-    // Determine role based on email and create/get user
-    const role = getUserRole(email);
-    const name = email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    const employeeId = `EMP${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
-    
-    const user: User = {
-      email,
-      name,
-      role: role as User['role'],
-      employeeId
-    };
-
-    // Store user session
-    storageService.setCurrentUser(user);
-    setCurrentUser(user);
-    
-    // Add user to storage if not exists
-    const users = storageService.getUsers();
-    if (!users.find(u => u.email === email)) {
-      storageService.setUsers([...users, user]);
+      if (error) {
+        throw new Error(`Google login error: ${error.message}`);
+      }
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: 'handleSignIn',
+      });
+      toast({
+        title: 'Error',
+        description: 'Failed to initiate Google sign-in',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsAuthenticating(false);
     }
-    
-    toast({
-      title: "Welcome to HelpDesk Pro",
-      description: `Logged in as ${name}`,
-    });
   };
 
-  const handleLogout = () => {
-    storageService.setCurrentUser(null);
-    setCurrentUser(null);
-    setEmail("");
-    
-    toast({
-      title: "Signed Out",
-      description: "You have been successfully signed out",
-    });
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      toast({
+        title: 'Success',
+        description: 'You have been signed out',
+      });
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: 'handleSignOut',
+      });
+      setUser(null);
+    }
   };
 
-  // Route to appropriate dashboard based on user role
-  if (currentUser) {
-    if (currentUser.role === "employee") {
-      return <EmployeeDashboard user={currentUser} onLogout={handleLogout} />;
-    } else if (currentUser.role === "owner") {
-      return <HRAdminDashboard user={currentUser} onLogout={handleLogout} />;
-    } else if (["it_owner", "hr_owner", "admin_owner", "accounts_owner"].includes(currentUser.role)) {
-      return <CategoryOwnerDashboard user={currentUser} onLogout={handleLogout} />;
-    }
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen">
+        <Loader2 className="h-8 w-8 animate-spin mb-4" />
+        <p>Loading...</p>
+      </div>
+    );
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-info/5 relative overflow-hidden">
-      {/* Animated Background Elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary/10 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-info/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-warning/5 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '4s' }}></div>
-      </div>
-
-      {/* Hero Section */}
-      <div className="container mx-auto px-4 py-20 relative z-10">
-        <div className="text-center mb-20">
-          <div className="inline-flex items-center gap-3 mb-8 animate-fade-in">
-            <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center shadow-glow hover-scale">
-              <TicketPlus className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-5xl lg:text-7xl font-bold gradient-hero bg-clip-text text-transparent leading-tight">
-              HelpDesk Pro
-            </h1>
-          </div>
-          
-          <div className="flex flex-wrap justify-center gap-3 mb-8 animate-fade-in" style={{ animationDelay: '0.3s' }}>
-            <Badge className="bg-primary/10 text-primary border-primary/20 px-4 py-2 text-sm font-medium">
-              <Shield className="w-4 h-4 mr-2" />
-              Enterprise Ready
-            </Badge>
-            <Badge className="bg-success/10 text-success border-success/20 px-4 py-2 text-sm font-medium">
-              <Zap className="w-4 h-4 mr-2" />
-              Real-time Updates
-            </Badge>
-            <Badge className="bg-info/10 text-info border-info/20 px-4 py-2 text-sm font-medium">
-              <Globe className="w-4 h-4 mr-2" />
-              Multi-Department
-            </Badge>
-          </div>
-          
-          <p className="text-xl lg:text-2xl text-muted-foreground mb-12 max-w-4xl mx-auto leading-relaxed animate-fade-in" style={{ animationDelay: '0.4s' }}>
-            Transform your organization's support experience with our <span className="text-primary font-semibold">intelligent ticketing system</span>. 
-            Seamlessly manage IT Infrastructure, HR, Administration, and Accounts requests with <span className="text-info font-semibold">real-time collaboration</span> and advanced analytics.
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16 animate-fade-in" style={{ animationDelay: '0.5s' }}>
-            <Button size="lg" className="gradient-primary text-white font-semibold px-8 py-4 h-auto text-lg hover-scale shadow-lg">
-              <TicketPlus className="w-5 h-5 mr-2" />
-              Start Free Trial
-              <ArrowRight className="w-5 h-5 ml-2" />
-            </Button>
-            <Button size="lg" variant="outline" className="border-primary/30 text-primary hover:bg-primary/5 px-8 py-4 h-auto text-lg">
-              <MessageSquare className="w-5 h-5 mr-2" />
-              Watch Demo
-            </Button>
-          </div>
-
-          {/* Hero Image */}
-          <div className="relative mb-20 max-w-6xl mx-auto animate-fade-in" style={{ animationDelay: '0.6s' }}>
-            <div className="relative group">
-              <div className="absolute -inset-4 bg-gradient-to-r from-primary/30 via-info/20 to-success/30 rounded-3xl blur-2xl opacity-30 group-hover:opacity-50 transition duration-1000"></div>
-              <img 
-                src={heroImage} 
-                alt="HelpDesk Pro Dashboard Interface showcasing modern ticket management system" 
-                className="relative w-full rounded-3xl shadow-2xl border border-primary/20 hover-scale transition-all duration-700"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-background/40 via-transparent to-primary/5 rounded-3xl"></div>
-              
-              {/* Floating Elements */}
-              <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm rounded-xl p-3 shadow-lg animate-pulse">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-success rounded-full animate-pulse"></div>
-                  <span className="text-sm font-medium text-gray-700">Live System</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Feature Cards */}
-          <div className="mb-20">
-            <div className="text-center mb-12 animate-fade-in" style={{ animationDelay: '0.8s' }}>
-              <h2 className="text-3xl lg:text-4xl font-bold mb-4">Powerful Features for Modern Teams</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                Everything you need to streamline support operations and deliver exceptional customer service
-              </p>
-            </div>
-            
-          <div className="grid md:grid-cols-3 gap-8">
-            <Card className="border-primary/20 shadow-glow hover:shadow-2xl transition-all duration-500 hover:-translate-y-2 animate-fade-in group relative overflow-hidden" style={{ animationDelay: '0.9s' }}>
-              <div className="absolute inset-0 bg-gradient-to-br from-success/5 to-transparent"></div>
-              <CardHeader className="pb-6 relative">
-                <div className="w-16 h-16 bg-gradient-to-br from-success/20 to-success/10 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300 shadow-lg">
-                  <Users className="w-8 h-8 text-success" />
-                </div>
-                <CardTitle className="text-xl font-bold text-center">Smart Role Management</CardTitle>
-              </CardHeader>
-              <CardContent className="text-center">
-                <CardDescription className="text-base leading-relaxed mb-4">
-                  Intelligent role-based dashboards with granular permissions, automated workflows, and personalized experiences for every team member.
-                </CardDescription>
-                <div className="flex justify-center">
-                  <Badge variant="outline" className="text-xs text-success border-success/30">Auto-Detection</Badge>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-primary/20 shadow-glow hover:shadow-2xl transition-all duration-500 hover:-translate-y-2 animate-fade-in group relative overflow-hidden" style={{ animationDelay: '1.1s' }}>
-              <div className="absolute inset-0 bg-gradient-to-br from-info/5 to-transparent"></div>
-              <CardHeader className="pb-6 relative">
-                <div className="w-16 h-16 bg-gradient-to-br from-info/20 to-info/10 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300 shadow-lg">
-                  <MessageSquare className="w-8 h-8 text-info" />
-                </div>
-                <CardTitle className="text-xl font-bold text-center">Live Collaboration</CardTitle>
-              </CardHeader>
-              <CardContent className="text-center">
-                <CardDescription className="text-base leading-relaxed mb-4">
-                  Instant messaging with thread management, file sharing, status updates, and smart notification system for seamless team communication.
-                </CardDescription>
-                <div className="flex justify-center">
-                  <Badge variant="outline" className="text-xs text-info border-info/30">Real-time</Badge>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-primary/20 shadow-glow hover:shadow-2xl transition-all duration-500 hover:-translate-y-2 animate-fade-in group relative overflow-hidden" style={{ animationDelay: '1.3s' }}>
-              <div className="absolute inset-0 bg-gradient-to-br from-warning/5 to-transparent"></div>
-              <CardHeader className="pb-6 relative">
-                <div className="w-16 h-16 bg-gradient-to-br from-warning/20 to-warning/10 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300 shadow-lg">
-                  <BarChart3 className="w-8 h-8 text-warning" />
-                </div>
-                <CardTitle className="text-xl font-bold text-center">Advanced Analytics</CardTitle>
-              </CardHeader>
-              <CardContent className="text-center">
-                <CardDescription className="text-base leading-relaxed mb-4">
-                  Comprehensive dashboards with performance metrics, SLA tracking, CSAT scores, predictive insights, and automated reporting.
-                </CardDescription>
-                <div className="flex justify-center">
-                  <Badge variant="outline" className="text-xs text-warning border-warning/30">AI-Powered</Badge>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-          </div>
-        </div>
-
-        {/* Social Proof Section */}
-        <div className="bg-gradient-to-r from-muted/50 to-muted/30 py-16 rounded-3xl mb-20 animate-fade-in" style={{ animationDelay: '1.5s' }}>
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+        <div className="container mx-auto px-4 py-16">
           <div className="text-center mb-12">
-            <h3 className="text-2xl font-bold mb-4">Trusted by Leading Organizations</h3>
-            <p className="text-muted-foreground">Join thousands of teams who've transformed their support operations</p>
-          </div>
-          
-          <div className="grid md:grid-cols-3 gap-8 mb-12">
-            {[
-              {
-                name: "Sarah Chen",
-                role: "IT Director at TechCorp",
-                content: "HelpDesk Pro reduced our average resolution time by 60%. The automated routing and real-time analytics are game-changers.",
-                rating: 5
-              },
-              {
-                name: "Michael Rodriguez", 
-                role: "HR Manager at GlobalFinance",
-                content: "The role-based dashboards are incredibly intuitive. Our team can now focus on what matters most - helping our employees.",
-                rating: 5
-              },
-              {
-                name: "Emily Watson",
-                role: "Operations Lead at StartupXYZ", 
-                content: "From chaos to clarity in just one week. The notification system and chat features have transformed our workflow.",
-                rating: 5
-              }
-            ].map((testimonial, index) => (
-              <Card key={index} className="border-primary/10 hover:border-primary/30 transition-all duration-300 hover:-translate-y-1">
-                <CardContent className="p-6">
-                  <div className="flex mb-4">
-                    {[...Array(testimonial.rating)].map((_, i) => (
-                      <Star key={i} className="w-4 h-4 fill-warning text-warning" />
-                    ))}
-                  </div>
-                  <blockquote className="text-sm leading-relaxed mb-4 italic">
-                    "{testimonial.content}"
-                  </blockquote>
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-primary/20 to-info/20 rounded-full flex items-center justify-center">
-                      <span className="font-semibold text-sm">{testimonial.name.split(' ').map(n => n[0]).join('')}</span>
-                    </div>
-                    <div>
-                      <div className="font-medium text-sm">{testimonial.name}</div>
-                      <div className="text-xs text-muted-foreground">{testimonial.role}</div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-          
-          <div className="text-center">
-            <div className="flex justify-center items-center gap-8 text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <Award className="w-5 h-5 text-warning" />
-                <span className="font-medium">99.9% Uptime</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Target className="w-5 h-5 text-success" />
-                <span className="font-medium">50k+ Tickets Resolved</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-info" />
-                <span className="font-medium">500+ Teams</span>
-              </div>
+            <div className="flex items-center gap-4 justify-center">
+              <img src={faviconSrc} width="80" height="80" alt="favicon" />
+              <h1 className="text-4xl font-bold text-gray-900">
+                Support Ticket Management System
+              </h1>
             </div>
+            <p className="text-lg text-gray-600 mb-8">
+              Streamline your support requests and manage tickets efficiently
+            </p>
+          </div>
+          <div className="max-w-md mx-auto">
+            <Card>
+              <CardHeader className="text-center">
+                <CardTitle>Welcome</CardTitle>
+                <CardDescription>
+                  Sign in with your Google account to access the support system
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-center space-y-4">
+                <Button
+                  onClick={handleSignIn}
+                  disabled={isAuthenticating}
+                  size="lg"
+                  className="w-full"
+                >
+                  {isAuthenticating ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Signing in...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
+                        <path
+                          fill="currentColor"
+                          d="M22.56 12.25c0-.78-.07-1.53-.20-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                        />
+                        <path
+                          fill="currentColor"
+                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                        />
+                        <path
+                          fill="currentColor"
+                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                        />
+                        <path
+                          fill="currentColor"
+                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.60 3.3-4.53 6.16-4.53z"
+                        />
+                      </svg>
+                      Sign in with Google
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12 mt-8">
+            <Card>
+              <CardHeader className="text-center">
+                <Ticket className="h-12 w-12 text-blue-600 mx-auto mb-2" />
+                <CardTitle className="text-lg">Easy Ticket Creation</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CardDescription className="text-center">
+                  Submit and track your support requests with ease
+                </CardDescription>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="text-center">
+                <Users className="h-12 w-12 text-green-600 mx-auto mb-2" />
+                <CardTitle className="text-lg">Team Collaboration</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CardDescription className="text-center">
+                  Work together to resolve issues quickly and efficiently
+                </CardDescription>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="text-center">
+                <BarChart className="h-12 w-12 text-purple-600 mx-auto mb-2" />
+                <CardTitle className="text-lg">Analytics & Reports</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CardDescription className="text-center">
+                  Track performance and identify improvement areas
+                </CardDescription>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="text-center">
+                <Shield className="h-12 w-12 text-red-600 mx-auto mb-2" />
+                <CardTitle className="text-lg">Secure & Reliable</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CardDescription className="text-center">
+                  Your data is protected with enterprise-grade security
+                </CardDescription>
+              </CardContent>
+            </Card>
           </div>
         </div>
-
-        {/* Login Form */}
-        <Card className="max-w-lg mx-auto shadow-2xl border-primary/20 backdrop-blur-sm bg-card/95 animate-fade-in hover:shadow-glow transition-all duration-500 relative overflow-hidden" style={{ animationDelay: '1.7s' }}>
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-info/5"></div>
-          <CardHeader className="text-center pb-8 relative">
-            <div className="w-12 h-12 gradient-primary rounded-xl flex items-center justify-center mx-auto mb-4">
-              <Shield className="w-6 h-6 text-white" />
-            </div>
-            <CardTitle className="text-3xl font-bold gradient-hero bg-clip-text text-transparent">Get Started Today</CardTitle>
-            <CardDescription className="text-lg text-muted-foreground">
-              Access your personalized helpdesk experience in seconds
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-8 relative">
-            <form onSubmit={handleLogin} className="space-y-6">
-              <div className="space-y-3">
-                <label htmlFor="email" className="text-sm font-semibold text-foreground">Email Address</label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="Enter your professional email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-12 text-base border-primary/20 focus:border-primary/50 transition-colors"
-                />
-              </div>
-              
-              <div className="space-y-3">
-                <label className="text-sm font-semibold text-foreground">
-                  🔐 Role Auto-Detection System
-                </label>
-                <div className="bg-muted/50 p-4 rounded-xl border border-primary/10">
-                  <div className="text-sm space-y-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-primary rounded-full"></div>
-                      <span><code className="bg-primary/10 px-1.5 py-0.5 rounded text-xs">it.*</code> → IT Infrastructure Owner</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-success rounded-full"></div>
-                      <span><code className="bg-success/10 px-1.5 py-0.5 rounded text-xs">hr.*</code> → HR Owner</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-warning rounded-full"></div>
-                      <span><code className="bg-warning/10 px-1.5 py-0.5 rounded text-xs">admin.*</code> → Administration Owner</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-info rounded-full"></div>
-                      <span><code className="bg-info/10 px-1.5 py-0.5 rounded text-xs">accounts.*</code> → Accounts Owner</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-destructive rounded-full"></div>
-                      <span><code className="bg-destructive/10 px-1.5 py-0.5 rounded text-xs">owner@</code> → System Administrator</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-muted-foreground rounded-full"></div>
-                      <span>Others → Employee Access</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <Button type="submit" className="w-full h-12 gradient-primary text-white font-semibold text-lg hover-scale shadow-lg relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
-                <span className="relative z-10 flex items-center justify-center">
-                  <TicketPlus className="w-5 h-5 mr-2" />
-                  Launch Dashboard
-                  <ArrowRight className="w-5 h-5 ml-2" />
-                </span>
-              </Button>
-            </form>
-
-            {/* Demo Info */}
-            <div className="bg-gradient-to-r from-primary/5 to-info/5 p-6 rounded-2xl border border-primary/10 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-primary/10 to-transparent rounded-full blur-2xl"></div>
-              <div className="text-center mb-4 relative">
-                <h4 className="text-base font-semibold text-foreground mb-2 flex items-center justify-center gap-2">
-                  <Zap className="w-4 h-4 text-primary" />
-                  Try Live Demo Accounts
-                </h4>
-                <p className="text-sm text-muted-foreground">Experience different role capabilities instantly</p>
-              </div>
-              <div className="grid sm:grid-cols-2 gap-3 relative">
-                <div className="bg-card/70 backdrop-blur-sm p-3 rounded-xl border border-primary/10 hover:border-primary/30 transition-all duration-300 hover:-translate-y-0.5 group">
-                  <Badge variant="outline" className="mb-2 text-xs font-mono group-hover:scale-105 transition-transform">john.doe@company.com</Badge>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Users className="w-3 h-3" />
-                    Employee Experience
-                  </div>
-                </div>
-                <div className="bg-card/70 backdrop-blur-sm p-3 rounded-xl border border-primary/10 hover:border-primary/30 transition-all duration-300 hover:-translate-y-0.5 group">
-                  <Badge variant="outline" className="mb-2 text-xs font-mono group-hover:scale-105 transition-transform">it.admin@company.com</Badge>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Zap className="w-3 h-3" />
-                    IT Infrastructure
-                  </div>
-                </div>
-                <div className="bg-card/70 backdrop-blur-sm p-3 rounded-xl border border-primary/10 hover:border-primary/30 transition-all duration-300 hover:-translate-y-0.5 group">
-                  <Badge variant="outline" className="mb-2 text-xs font-mono group-hover:scale-105 transition-transform">hr.admin@company.com</Badge>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Users className="w-3 h-3" />
-                    Human Resources
-                  </div>
-                </div>
-                <div className="bg-card/70 backdrop-blur-sm p-3 rounded-xl border border-primary/10 hover:border-primary/30 transition-all duration-300 hover:-translate-y-0.5 group">
-                  <Badge variant="outline" className="mb-2 text-xs font-mono group-hover:scale-105 transition-transform">owner@company.com</Badge>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Shield className="w-3 h-3" />
-                    Full Access
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Enhanced Live Stats Section */}
-        <div className="mt-24 mb-12">
-          <div className="text-center mb-12 animate-fade-in" style={{ animationDelay: '1.9s' }}>
-            <h3 className="text-2xl font-bold mb-4">Live System Statistics</h3>
-            <p className="text-muted-foreground">Real-time insights from our active helpdesk system</p>
-          </div>
-          
-        <div className="grid md:grid-cols-4 gap-6">
-          {(() => {
-            const allTickets = storageService.getTickets();
-            const today = new Date();
-            const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-            
-            // Calculate resolved today (tickets closed today)
-            const resolvedToday = allTickets.filter(t => {
-              if (t.status !== "Closed" || !t.updatedAt) return false;
-              const ticketUpdated = new Date(t.updatedAt);
-              return ticketUpdated >= todayStart;
-            }).length;
-            
-            // Calculate active tickets (not closed)
-            const activeTickets = allTickets.filter(t => t.status !== "Closed").length;
-            
-            // Calculate average response time
-            const ticketsWithResponseTime = allTickets.filter(t => t.responseTime && t.responseTime > 0);
-            const avgResponseTime = ticketsWithResponseTime.length > 0
-              ? (ticketsWithResponseTime.reduce((sum, t) => sum + (t.responseTime || 0), 0) / ticketsWithResponseTime.length)
-              : 0;
-            
-            // Get actual team members count
-            const totalUsers = storageService.getUsers().length;
-            
-            const stats = [
-              { 
-                icon: TicketPlus, 
-                label: "Active Tickets", 
-                value: activeTickets.toString(), 
-                color: "text-primary",
-                bgColor: "from-primary/20 to-primary/10",
-                description: "Open & In Progress"
-              },
-              { 
-                icon: Clock, 
-                label: "Avg Response Time", 
-                value: avgResponseTime > 0 ? `${avgResponseTime.toFixed(1)}h` : "N/A", 
-                color: "text-warning",
-                bgColor: "from-warning/20 to-warning/10",
-                description: "Team Performance"
-              },
-              { 
-                icon: CheckCircle, 
-                label: "Resolved Today", 
-                value: resolvedToday.toString(), 
-                color: "text-success",
-                bgColor: "from-success/20 to-success/10",
-                description: "Closed Tickets"
-              },
-              { 
-                icon: Users, 
-                label: "Team Members", 
-                value: totalUsers.toString(), 
-                color: "text-info",
-                bgColor: "from-info/20 to-info/10",
-                description: "Active Users"
-              },
-            ];
-            
-            return stats.map((stat, index) => (
-              <Card key={index} className="text-center border-primary/20 hover:border-primary/40 shadow-glow hover:shadow-2xl transition-all duration-500 hover:-translate-y-1 animate-fade-in group relative overflow-hidden" style={{ animationDelay: `${2.1 + index * 0.1}s` }}>
-                <div className={`absolute inset-0 bg-gradient-to-br ${stat.bgColor.replace('from-', 'from-').replace('to-', 'to-')} opacity-50`}></div>
-                <CardContent className="pt-8 pb-6 relative">
-                  <div className={`w-16 h-16 bg-gradient-to-br ${stat.bgColor} rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300 shadow-lg relative`}>
-                    <stat.icon className={`w-8 h-8 ${stat.color} relative z-10`} />
-                  </div>
-                  <div className="text-3xl font-bold mb-1 relative">{stat.value}</div>
-                  <div className="text-sm font-medium text-foreground mb-1 relative">{stat.label}</div>
-                  <div className="text-xs text-muted-foreground relative">{stat.description}</div>
-                </CardContent>
-              </Card>
-            ));
-          })()}
-        </div>
-        </div>
-        
-        {/* Footer */}
-        <footer className="border-t bg-card/30 backdrop-blur-sm mt-20">
-          <div className="container mx-auto px-4 py-12">
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-3 mb-6">
-                <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center">
-                  <TicketPlus className="w-5 h-5 text-white" />
-                </div>
-                <span className="text-xl font-bold">HelpDesk Pro</span>
-              </div>
-              <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-                Streamlining support operations for modern organizations with intelligent automation and real-time collaboration.
-              </p>
-              <div className="flex justify-center gap-6 text-sm text-muted-foreground">
-                <span>© 2024 HelpDesk Pro</span>
-                <span>•</span>
-                <span>Enterprise Solution</span>
-                <span>•</span>
-                <span>Built with ❤️</span>
-              </div>
-            </div>
-          </div>
-        </footer>
       </div>
-    </div>
-  );
-};
+    );
+  }
 
-export default Index;
+  const DashboardComponent = () => {
+    switch (user.role) {
+      case 'employee':
+        return <EmployeeDashboard user={user} onSignOut={handleSignOut} />;
+      case 'it_owner':
+      case 'accounts_owner':
+      case 'admin_owner':
+        return <CategoryOwnerDashboard user={user} onSignOut={handleSignOut} />;
+      case 'hr_owner':
+      case 'owner':
+        return <HRAdminDashboard user={user} onSignOut={handleSignOut} />;
+      default:
+        return (
+          <div className="container mx-auto p-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Access Denied</CardTitle>
+                <CardDescription>
+                  Your account doesn't have the necessary permissions to access this system.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button onClick={handleSignOut} variant="outline">
+                  Sign Out
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        );
+    }
+  };
+
+  return <DashboardComponent />;
+}
+

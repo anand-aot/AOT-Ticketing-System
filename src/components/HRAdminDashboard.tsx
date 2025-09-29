@@ -1,210 +1,354 @@
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  Shield, LogOut, MessageSquare, Clock, TrendingUp, 
-  AlertTriangle, CheckCircle, Filter, Search, Star,
-  BarChart3, Users, Target, Timer, Download, Building,
-  Zap, FileText, DollarSign, History, ThumbsUp
-} from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
-import { storageService, canAccessAllTickets, type Ticket, type User } from "@/utils/storage";
-import ChatModal from "./ChatModal";
-import NotificationSystem from "./NotificationSystem";
-import TicketHistoryModal from "./TicketHistoryModal";
+// src/components/HRAdminDashboard.tsx
+
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { storageService } from '@/utils/storage';
+import { Ticket, User, TicketCategory, TicketStatus } from '@/types';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { useToast } from '@/hooks/use-toast';
+import { Link } from 'react-router-dom';
+import { Download, UserPlus, Users, BarChart3, History, Target, IdCard } from 'lucide-react';
+import { utils, writeFile } from 'xlsx';
+import NotificationSystem from './NotificationSystem';
+import TicketTable from './TicketTable';
+import SLATracker from './SLATracker';
+import AuditLogViewer from './AuditLogViewer';
+import JiraStyleDashboard from './JiraStyleBoard';
 
 interface HRAdminDashboardProps {
   user: User;
-  onLogout: () => void;
+  onSignOut: () => void;
 }
 
-const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
-  const [activeTab, setActiveTab] = useState("overview");
+export default function HRAdminDashboard({ user, onSignOut }: HRAdminDashboardProps) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [filterCategory, setFilterCategory] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [selectedTicketForHistory, setSelectedTicketForHistory] = useState<string | null>(null);
-  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [assignableUsers, setAssignableUsers] = useState<User[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [selectedCategory, setSelectedCategory] = useState<TicketCategory | 'All'>('All');
+  const [activeTab, setActiveTab] = useState('overview');
+  const [analytics, setAnalytics] = useState({
+    byCategory: {
+      'IT Infrastructure': 0,
+      HR: 0,
+      Administration: 0,
+      Accounts: 0,
+      Others: 0,
+    } as Record<TicketCategory, number>,
+    byStatus: {
+      Open: 0,
+      'In Progress': 0,
+      Escalated: 0,
+      Closed: 0,
+    } as Record<TicketStatus, number>,
+    openEscalated: 0,
+    slaCompliant: 0,
+    slaViolated: 0,
+    csat: 0,
+    assigned: 0,
+    unassigned: 0,
+    avgResponseTime: 0,
+    avgResolutionTime: 0,
+  });
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const pageSize = 20;
 
-  const categories = ["IT Infrastructure", "HR", "Administration", "Accounts", "Others"];
+  // Get allowed categories based on user role
+  const getAllowedCategories = (): TicketCategory[] => {
+    if (user.role === 'owner') {
+      return ['IT Infrastructure', 'HR', 'Administration', 'Accounts', 'Others'];
+    } else if (user.role === 'hr_owner') {
+      return ['HR', 'Others'];
+    }
+    return [];
+  };
 
   useEffect(() => {
-    loadTickets();
-  }, []);
+    if (!user || !['owner', 'hr_owner'].includes(user.role)) {
+      toast({
+        title: 'Access Denied',
+        description: 'You do not have permission to access this dashboard',
+        variant: 'destructive',
+      });
+      navigate('/');
+      return;
+    }
 
-  const loadTickets = () => {
-    const allTickets = storageService.getTickets();
-    setTickets(allTickets);
-  };
-  
-  const filteredTickets = tickets.filter(ticket => {
-    const matchesCategory = filterCategory === "all" || ticket.category === filterCategory;
-    const matchesStatus = filterStatus === "all" || ticket.status.toLowerCase() === filterStatus;
-    const matchesSearch = ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         ticket.employeeName.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesStatus && matchesSearch;
-  });
-
-  // Analytics calculations
-  const totalTickets = tickets.length;
-  const openTickets = tickets.filter(t => t.status === "Open").length;
-  const inProgressTickets = tickets.filter(t => t.status === "In Progress").length;
-  const escalatedTickets = tickets.filter(t => t.status === "Escalated").length;
-  const closedTickets = tickets.filter(t => t.status === "Closed").length;
-
-  // Category-wise breakdown
-  const categoryStats = categories.map(category => {
-    const categoryTickets = tickets.filter(t => t.category === category);
-    const closed = categoryTickets.filter(t => t.status === "Closed").length;
-    const total = categoryTickets.length;
-    const avgRating = categoryTickets.filter(t => t.rating).reduce((sum, t, _, arr) => 
-      sum + (t.rating || 0) / arr.length, 0) || 0;
-    
-    return {
-      category,
-      total,
-      closed,
-      open: total - closed,
-      resolutionRate: total > 0 ? (closed / total) * 100 : 0,
-      avgRating: avgRating || 0,
+    // Load assignable users
+    const loadAssignableUsers = async () => {
+      try {
+        if (user.role === 'owner') {
+          const allUsers = await storageService.getAllUsers(1, 100);
+          setAssignableUsers(allUsers.filter((u) => u.role !== 'employee'));
+        } else if (user.role === 'hr_owner') {
+          const [hrUsers, ownerUsers] = await Promise.all([
+            storageService.getUsersByRole('hr_owner'),
+            storageService.getUsersByRole('owner'),
+          ]);
+          setAssignableUsers([...hrUsers, ...ownerUsers]);
+        }
+      } catch (error) {
+        console.error('Failed to load assignable users:', error);
+        toast({
+          title: 'Error',
+          description: 'Failed to load assignable users',
+          variant: 'destructive',
+        });
+      }
     };
-  });
 
-  // Overall metrics
-  const ticketsWithRating = tickets.filter(t => t.rating);
-  const overallCSAT = ticketsWithRating.length > 0 
-    ? ticketsWithRating.reduce((sum, t) => sum + (t.rating || 0), 0) / ticketsWithRating.length
-    : 0;
+    loadAssignableUsers();
+  }, [user, navigate, toast]);
 
-  const ticketsWithResponseTime = tickets.filter(t => t.responseTime);
-  const avgResponseTime = ticketsWithResponseTime.length > 0
-    ? ticketsWithResponseTime.reduce((sum, t) => sum + (t.responseTime || 0), 0) / ticketsWithResponseTime.length
-    : 0;
+  useEffect(() => {
+    const fetchTickets = async () => {
+      try {
+        const allowedCategories = getAllowedCategories();
+        if (allowedCategories.length === 0) {
+          setTickets([]);
+          setTotalPages(1);
+          resetAnalytics();
+          return;
+        }
 
-  // SLA compliance metrics - simplified version for demo
-  const slaCompliantTickets = tickets.filter(t => t.status === "Closed" && (t.resolutionTime || 0) <= 24).length;
-  const slaComplianceRate = totalTickets > 0 ? (slaCompliantTickets / totalTickets) * 100 : 0;
-  
-  // Reviewed tickets (with ratings)
-  const reviewedTickets = ticketsWithRating.sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
+        let response;
+        if (user.role === 'owner') {
+          if (selectedCategory === 'All') {
+            response = await storageService.getTickets(page, pageSize);
+          } else {
+            response = await storageService.getTicketsByCategory(selectedCategory, page, pageSize);
+          }
+        } else if (user.role === 'hr_owner') {
+          if (selectedCategory === 'All') {
+            const [hrTickets, othersTickets] = await Promise.all([
+              storageService.getTicketsByCategory('HR', page, Math.ceil(pageSize / 2)),
+              storageService.getTicketsByCategory('Others', page, Math.ceil(pageSize / 2)),
+            ]);
+            const combinedTickets = [...hrTickets, ...othersTickets].slice(0, pageSize);
+            response = { tickets: combinedTickets, totalCount: combinedTickets.length };
+          } else if (allowedCategories.includes(selectedCategory)) {
+            response = await storageService.getTicketsByCategory(selectedCategory, page, pageSize);
+          } else {
+            response = { tickets: [], totalCount: 0 };
+          }
+        } else {
+          response = { tickets: [], totalCount: 0 };
+        }
 
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case "Critical": return "bg-priority-critical text-white";
-      case "High": return "bg-priority-high text-white";
-      case "Medium": return "bg-priority-medium text-white";
-      case "Low": return "bg-priority-low text-white";
-      default: return "bg-muted";
-    }
-  };
+        const ticketData = response.tickets || [];
+        setTickets(ticketData);
+        setTotalPages(Math.ceil((response.totalCount || ticketData.length) / pageSize) || 1);
+        calculateAnalytics(ticketData);
+      } catch (error: any) {
+        console.error('Failed to fetch tickets:', error);
+        toast({ title: 'Error', description: 'Failed to load tickets', variant: 'destructive' });
+        setTickets([]);
+        setTotalPages(1);
+        resetAnalytics();
+      }
+    };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Open": return "bg-info/10 text-info border-info/20";
-      case "In Progress": return "bg-warning/10 text-warning border-warning/20";
-      case "Escalated": return "bg-destructive/10 text-destructive border-destructive/20";
-      case "Closed": return "bg-success/10 text-success border-success/20";
-      default: return "bg-muted";
-    }
-  };
+    fetchTickets();
+  }, [page, selectedCategory, user.role, toast]);
 
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case "IT Infrastructure": return <Zap className="w-5 h-5" />;
-      case "HR": return <Users className="w-5 h-5" />;
-      case "Administration": return <Building className="w-5 h-5" />;
-      case "Accounts": return <DollarSign className="w-5 h-5" />;
-      default: return <FileText className="w-5 h-5" />;
-    }
-  };
-
-  const handleExportReport = () => {
-    const csv = storageService.exportTicketsToCSV(user.role);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${user.role === 'owner' ? 'all' : user.role.replace('_owner', '')}-tickets-report-${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
-    
-    toast({
-      title: "Report Generated", 
-      description: `${user.role === 'owner' ? 'Complete' : 'Category'} ticket analytics report has been exported`,
+  const resetAnalytics = () => {
+    setAnalytics({
+      byCategory: {
+        'IT Infrastructure': 0,
+        HR: 0,
+        Administration: 0,
+        Accounts: 0,
+        Others: 0,
+      },
+      byStatus: {
+        Open: 0,
+        'In Progress': 0,
+        Escalated: 0,
+        Closed: 0,
+      },
+      openEscalated: 0,
+      slaCompliant: 0,
+      slaViolated: 0,
+      csat: 0,
+      assigned: 0,
+      unassigned: 0,
+      avgResponseTime: 0,
+      avgResolutionTime: 0,
     });
   };
 
-  const handleOpenChat = (ticket: Ticket) => {
-    setSelectedTicket(ticket);
-    setIsChatOpen(true);
-  };
+  const calculateAnalytics = (ticketData: Ticket[]) => {
+    const byCategory = ticketData.reduce(
+      (acc, t) => {
+        acc[t.category] = (acc[t.category] || 0) + 1;
+        return acc;
+      },
+      {
+        'IT Infrastructure': 0,
+        HR: 0,
+        Administration: 0,
+        Accounts: 0,
+        Others: 0,
+      } as Record<TicketCategory, number>,
+    );
 
-  const handleOpenHistory = (ticketId: string) => {
-    setSelectedTicketForHistory(ticketId);
-    setIsHistoryModalOpen(true);
-  };
+    const byStatus = ticketData.reduce(
+      (acc, t) => {
+        acc[t.status] = (acc[t.status] || 0) + 1;
+        return acc;
+      },
+      {
+        Open: 0,
+        'In Progress': 0,
+        Escalated: 0,
+        Closed: 0,
+      } as Record<TicketStatus, number>,
+    );
 
-  const handleStatusChange = (ticketId: string, newStatus: Ticket["status"]) => {
-    storageService.updateTicket(ticketId, { status: newStatus });
-    loadTickets();
-    
-    toast({
-      title: "Status Updated",
-      description: `Ticket ${ticketId} status changed to ${newStatus}`,
+    const openEscalated = ticketData.filter((t) => ['Open', 'Escalated'].includes(t.status)).length;
+    const slaCompliant = ticketData.filter((t) => !t.slaViolated).length;
+    const slaViolated = ticketData.filter((t) => t.slaViolated).length;
+    const assigned = ticketData.filter((t) => t.assignedTo).length;
+    const unassigned = ticketData.filter((t) => !t.assignedTo).length;
+    const ratedTickets = ticketData.filter((t) => t.rating);
+    const csat = ratedTickets.length > 0
+      ? ratedTickets.reduce((sum, t) => sum + (t.rating || 0), 0) / ratedTickets.length
+      : 0;
+    const responseTimes = ticketData.filter((t) => t.responseTime).map((t) => t.responseTime!);
+    const avgResponseTime = responseTimes.length > 0
+      ? responseTimes.reduce((sum, time) => sum + time, 0) / responseTimes.length
+      : 0;
+    const resolutionTimes = ticketData.filter((t) => t.resolutionTime).map((t) => t.resolutionTime!);
+    const avgResolutionTime = resolutionTimes.length > 0
+      ? resolutionTimes.reduce((sum, time) => sum + time, 0) / resolutionTimes.length
+      : 0;
+
+    setAnalytics({
+      byCategory,
+      byStatus,
+      openEscalated,
+      slaCompliant,
+      slaViolated,
+      csat: isNaN(csat) ? 0 : csat,
+      assigned,
+      unassigned,
+      avgResponseTime,
+      avgResolutionTime,
     });
   };
 
-  const renderRating = (rating?: number) => {
-    if (!rating) return <span className="text-muted-foreground text-sm">Not rated</span>;
+  const handleUpdate = async (ticketId: string, updates: Partial<Ticket>) => {
+    try {
+      await storageService.updateTicket(ticketId, updates, user.email);
+      setTickets((prev) => prev.map((t) => (t.id === ticketId ? { ...t, ...updates } : t)));
+      toast({ title: 'Success', description: 'Ticket updated successfully' });
+    } catch (error: any) {
+      console.error('Failed to update ticket:', error);
+      toast({ title: 'Error', description: 'Failed to update ticket', variant: 'destructive' });
+    }
+  };
+
+  const handleAssignTicket = async (ticketId: string, assigneeEmail: string) => {
+    try {
+      const assignee = assignableUsers.find((u) => u.email === assigneeEmail);
+      await handleUpdate(ticketId, {
+        assignedTo: assigneeEmail,
+        status: 'In Progress' as TicketStatus,
+      });
+      toast({
+        title: 'Success',
+        description: `Ticket assigned to ${assignee?.name || assigneeEmail}`,
+      });
+    } catch (error) {
+      toast({ title: 'Error', description: 'Failed to assign ticket', variant: 'destructive' });
+    }
+  };
+
+  const exportTickets = () => {
+    const worksheet = utils.json_to_sheet(
+      tickets.map((t) => ({
+        ID: t.id,
+        'Employee Code': t.employeeId,
+        Subject: t.subject,
+        Category: t.category,
+        Priority: t.priority,
+        Status: t.status,
+        'Assigned To': t.assignedTo || 'Unassigned',
+        Created: new Date(t.createdAt).toLocaleDateString(),
+        Employee: t.employeeName,
+        Email: t.employeeEmail,
+        Department: t.department || 'N/A',
+        'SLA Violated': t.slaViolated ? 'Yes' : 'No',
+        Rating: t.rating || 'N/A',
+        'Response Time (hrs)': t.responseTime ? t.responseTime.toFixed(1) : 'N/A',
+        'Resolution Time (hrs)': t.resolutionTime ? t.resolutionTime.toFixed(1) : 'N/A',
+      })),
+    );
+    const workbook = utils.book_new();
+    utils.book_append_sheet(workbook, worksheet, 'Tickets');
+    const filename =
+      user.role === 'owner'
+        ? `all_tickets_${new Date().toISOString().split('T')[0]}.xlsx`
+        : `hr_tickets_${new Date().toISOString().split('T')[0]}.xlsx`;
+    writeFile(workbook, filename);
+  };
+
+  if (!user) {
     return (
-      <div className="flex items-center gap-1">
-        {[1, 2, 3, 4, 5].map((star) => (
-          <Star
-            key={star}
-            className={cn("w-4 h-4", star <= rating ? "fill-warning text-warning" : "text-muted-foreground")}
-          />
-        ))}
-        <span className="text-sm text-muted-foreground ml-1">({rating}/5)</span>
+      <div className="container mx-auto p-4">
+        <Card>
+          <CardContent>
+            <p>Error: User data not available.</p>
+          </CardContent>
+        </Card>
       </div>
     );
-  };
+  }
 
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-card/50 backdrop-blur supports-[backdrop-filter]:bg-card/50">
         <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between md:flex-nowrap">
+            <div className="flex items-center gap-3 md:w-1/2">
               <div className="w-10 h-10 gradient-primary rounded-lg flex items-center justify-center">
-                <Shield className="w-5 h-5 text-white" />
+                <Users className="w-5 h-5 text-white" />
               </div>
               <div>
                 <h1 className="text-xl font-bold">Welcome, {user.name}</h1>
-                <p className="text-sm text-muted-foreground">System Administrator - Full Access</p>
+                <p className="text-sm text-muted-foreground">
+                  {user.role === 'owner' ? 'System Administrator - Full Access' : 'HR Administrator'}
+                </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 md:w-3/4 md:justify-end mt-3">
               <NotificationSystem user={user} />
-              <Button variant="outline" onClick={handleExportReport} className="gap-2">
+              <Link to="/profile">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <IdCard className="w-4 h-4" />
+                  <span className="hidden min-[570px]:inline">Profile</span>
+                </Button>
+              </Link>
+              {user.verify_role_updater && (
+                <Link to="/role-update">
+                  <Button variant="outline" size="sm" className="gap-2 bg-primary/10 border-primary/20 text-primary hover:bg-primary/20">
+                    <UserPlus className="w-4 h-4" />
+                    <span className="hidden min-[570px]:inline">Role Manage</span>
+                  </Button>
+                </Link>
+              )}
+              <Button variant="outline" onClick={exportTickets} className="gap-2">
                 <Download className="w-4 h-4" />
-                Export Report
+                <span className="hidden min-[570px]:inline">Export Report</span>
               </Button>
-              <Button variant="outline" onClick={onLogout} className="gap-2">
-                <LogOut className="w-4 h-4" />
-                Sign Out
+              <Button variant="outline" onClick={onSignOut} className="gap-2">
+                <Users className="w-4 h-4" />
+                <span className="hidden min-[570px]:inline">Sign Out</span>
               </Button>
             </div>
           </div>
@@ -212,612 +356,186 @@ const HRAdminDashboard = ({ user, onLogout }: HRAdminDashboardProps) => {
       </header>
 
       <div className="container mx-auto px-4 py-8">
+        <div className="mb-6">
+          <Select value={selectedCategory} onValueChange={(value) => setSelectedCategory(value as TicketCategory | 'All')}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Filter by category" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="All">All Categories</SelectItem>
+              {getAllowedCategories().map((category) => (
+                <SelectItem key={category} value={category}>
+                  {category}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="overview" className="gap-2">
               <BarChart3 className="w-4 h-4" />
-              Overview
-            </TabsTrigger>
-            <TabsTrigger value="categories" className="gap-2">
-              <Target className="w-4 h-4" />
-              Categories
+              <span className="hidden min-[570px]:inline">Overview</span>
             </TabsTrigger>
             <TabsTrigger value="tickets" className="gap-2">
-              <MessageSquare className="w-4 h-4" />
-              All Tickets ({totalTickets})
+              <Users className="w-4 h-4" />
+              <span className="hidden min-[570px]:inline">Tickets ({tickets.length})</span>
             </TabsTrigger>
-            <TabsTrigger value="reviewed" className="gap-2">
-              <ThumbsUp className="w-4 h-4" />
-              Reviewed ({reviewedTickets.length})
+            <TabsTrigger value="jira-board" className="gap-2">
+              <Users className="w-4 h-4" />
+              <span className="hidden min-[570px]:inline">Ticket Board</span>
+            </TabsTrigger>
+            <TabsTrigger value="sla-tracker" className="gap-2">
+              <Target className="w-4 h-4" />
+              <span className="hidden min-[570px]:inline">SLA Tracker ({analytics.slaViolated})</span>
             </TabsTrigger>
             <TabsTrigger value="audit" className="gap-2">
               <History className="w-4 h-4" />
-              Audit Logs
-            </TabsTrigger>
-            <TabsTrigger value="analytics" className="gap-2">
-              <TrendingUp className="w-4 h-4" />
-              Analytics
+              <span className="hidden min-[570px]:inline">Audit Logs</span>
             </TabsTrigger>
           </TabsList>
-
           <TabsContent value="overview" className="space-y-6 mt-6">
-            {/* Key Metrics */}
-            <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Total</p>
-                      <p className="text-2xl font-bold">{totalTickets}</p>
-                    </div>
-                    <MessageSquare className="w-8 h-8 text-primary" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Open</p>
-                      <p className="text-2xl font-bold text-info">{openTickets}</p>
-                    </div>
-                    <Clock className="w-8 h-8 text-info" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">In Progress</p>
-                      <p className="text-2xl font-bold text-warning">{inProgressTickets}</p>
-                    </div>
-                    <Timer className="w-8 h-8 text-warning" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Escalated</p>
-                      <p className="text-2xl font-bold text-destructive">{escalatedTickets}</p>
-                    </div>
-                    <AlertTriangle className="w-8 h-8 text-destructive" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Resolved</p>
-                      <p className="text-2xl font-bold text-success">{closedTickets}</p>
-                    </div>
-                    <CheckCircle className="w-8 h-8 text-success" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">SLA Compliant</p>
-                      <p className="text-2xl font-bold text-success">{slaComplianceRate.toFixed(1)}%</p>
-                    </div>
-                    <Target className="w-8 h-8 text-success" />
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Category Performance */}
-            <div className="grid lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>System Performance</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Resolution Rate</span>
-                      <span className="font-medium">{((closedTickets / totalTickets) * 100 || 0).toFixed(1)}%</span>
-                    </div>
-                    <Progress value={(closedTickets / totalTickets) * 100 || 0} className="h-2" />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Customer Satisfaction</span>
-                      <span className="font-medium">{overallCSAT.toFixed(1)}/5</span>
-                    </div>
-                    <Progress value={(overallCSAT / 5) * 100} className="h-2" />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Avg Response Time</span>
-                      <span className="font-medium">{avgResponseTime.toFixed(1)}h</span>
-                    </div>
-                    <Progress value={Math.min((24 - avgResponseTime) / 24 * 100, 100)} className="h-2" />
-                  </div>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader>
-                  <CardTitle>Categories Overview</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {categoryStats.map(stat => (
-                      <div key={stat.category} className="flex justify-between items-center p-3 bg-muted rounded-lg">
-                        <div className="flex items-center gap-3">
-                          {getCategoryIcon(stat.category)}
-                          <span className="font-medium">{stat.category}</span>
-                        </div>
-                        <div className="text-right text-sm">
-                          <div className="font-semibold">{stat.total} tickets</div>
-                          <div className="text-muted-foreground">{stat.resolutionRate.toFixed(1)}% resolved</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="categories" className="space-y-6 mt-6">
-            <div className="grid lg:grid-cols-2 xl:grid-cols-3 gap-6">
-              {categoryStats.map(stat => (
-                <Card key={stat.category}>
-                  <CardHeader className="pb-4">
-                    <CardTitle className="flex items-center gap-2">
-                      {getCategoryIcon(stat.category)}
-                      {stat.category}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-primary">{stat.total}</div>
-                        <div className="text-sm text-muted-foreground">Total</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-success">{stat.closed}</div>
-                        <div className="text-sm text-muted-foreground">Resolved</div>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Resolution Rate</span>
-                        <span className="font-medium">{stat.resolutionRate.toFixed(1)}%</span>
-                      </div>
-                      <Progress value={stat.resolutionRate} className="h-2" />
-                    </div>
-                    {stat.avgRating > 0 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">Avg Rating</span>
-                        <div className="flex items-center gap-1">
-                          <Star className="w-4 h-4 fill-warning text-warning" />
-                          <span className="text-sm font-medium">{stat.avgRating.toFixed(1)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="tickets" className="space-y-6 mt-6">
-            {/* Filters */}
-            <div className="flex flex-col lg:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search tickets or employee names..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <Select value={filterCategory} onValueChange={setFilterCategory}>
-                <SelectTrigger className="w-full lg:w-48">
-                  <Filter className="w-4 h-4 mr-2" />
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
-                  {categories.map(category => (
-                    <SelectItem key={category} value={category}>{category}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="w-full lg:w-48">
-                  <AlertTriangle className="w-4 h-4 mr-2" />
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="open">Open</SelectItem>
-                  <SelectItem value="in progress">In Progress</SelectItem>
-                  <SelectItem value="escalated">Escalated</SelectItem>
-                  <SelectItem value="closed">Closed</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Tickets List */}
-            <div className="grid gap-4">
-              {filteredTickets.length === 0 ? (
-                <Card>
-                  <CardContent className="py-12 text-center">
-                    <MessageSquare className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-medium mb-2">No tickets found</h3>
-                    <p className="text-muted-foreground">
-                      {searchQuery || filterCategory !== "all" || filterStatus !== "all" 
-                        ? "Try adjusting your search or filters"
-                        : "No tickets have been created yet"
-                      }
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                filteredTickets.map((ticket) => (
-                  <Card key={ticket.id} className="hover:shadow-md transition-shadow">
-                    <CardContent className="p-6">
-                      <div className="space-y-4">
-                        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <Badge variant="outline" className="font-mono">
-                                {ticket.id}
-                              </Badge>
-                              <Badge className={getPriorityColor(ticket.priority)}>
-                                {ticket.priority}
-                              </Badge>
-                              <Badge className={getStatusColor(ticket.status)}>
-                                {ticket.status}
-                              </Badge>
-                              <Badge variant="outline">
-                                {ticket.category}
-                              </Badge>
-                            </div>
-                            <h3 className="font-semibold text-lg mb-2">{ticket.subject}</h3>
-                            <p className="text-muted-foreground mb-2">{ticket.description}</p>
-                            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                              <span className="flex items-center gap-1">
-                                <Clock className="w-4 h-4" />
-                                {new Date(ticket.createdAt).toLocaleDateString()}
-                              </span>
-                              <span>Employee: {ticket.employeeName}</span>
-                              {ticket.responseTime && (
-                                <span>Response: {ticket.responseTime}h</span>
-                              )}
-                              {ticket.resolutionTime && (
-                                <span>Resolution: {ticket.resolutionTime}h</span>
-                              )}
-                            </div>
-                          </div>
-                          
-                          <div className="flex flex-col gap-3 lg:w-64">
-                            <Select 
-                              value={ticket.status} 
-                              onValueChange={(value: Ticket["status"]) => handleStatusChange(ticket.id, value)}
-                            >
-                              <SelectTrigger className="text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="Open">Open</SelectItem>
-                                <SelectItem value="In Progress">In Progress</SelectItem>
-                                <SelectItem value="Escalated">Escalated</SelectItem>
-                                <SelectItem value="Closed">Closed</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            
-                            <div className="flex gap-2">
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="gap-2"
-                                onClick={() => handleOpenChat(ticket)}
-                              >
-                                <MessageSquare className="w-4 h-4" />
-                                Chat {ticket.messages.length > 0 && `(${ticket.messages.length})`}
-                              </Button>
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="gap-2"
-                                onClick={() => handleOpenHistory(ticket.id)}
-                              >
-                                <History className="w-4 h-4" />
-                                History
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {ticket.rating && (
-                          <div className="pt-2 border-t">
-                            <span className="text-sm text-muted-foreground mr-2">Customer Rating:</span>
-                            {renderRating(ticket.rating)}
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              )}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="reviewed" className="space-y-6 mt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-2xl font-bold">Reviewed Tickets</h2>
-                <p className="text-muted-foreground">Tickets with customer ratings and feedback</p>
-              </div>
-              <Badge variant="secondary">{reviewedTickets.length} rated tickets</Badge>
-            </div>
-
-            <div className="grid gap-4">
-              {reviewedTickets.length === 0 ? (
-                <Card>
-                  <CardContent className="py-12 text-center">
-                    <ThumbsUp className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-medium mb-2">No reviewed tickets yet</h3>
-                    <p className="text-muted-foreground">Customer ratings will appear here once tickets are rated</p>
-                  </CardContent>
-                </Card>
-              ) : (
-                reviewedTickets.map((ticket) => (
-                  <Card key={ticket.id} className="hover:shadow-md transition-shadow">
-                    <CardContent className="p-6">
-                      <div className="space-y-4">
-                        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <Badge variant="outline" className="font-mono">
-                                {ticket.id}
-                              </Badge>
-                              <Badge className={getPriorityColor(ticket.priority)}>
-                                {ticket.priority}
-                              </Badge>
-                              <Badge className={getStatusColor(ticket.status)}>
-                                {ticket.status}
-                              </Badge>
-                              <Badge variant="outline">
-                                {ticket.category}
-                              </Badge>
-                            </div>
-                            <h3 className="font-semibold text-lg mb-2">{ticket.subject}</h3>
-                            <p className="text-muted-foreground mb-2">{ticket.description}</p>
-                            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                              <span className="flex items-center gap-1">
-                                <Clock className="w-4 h-4" />
-                                {new Date(ticket.createdAt).toLocaleDateString()}
-                              </span>
-                              <span>Employee: {ticket.employeeName}</span>
-                              {ticket.responseTime && (
-                                <span>Response: {ticket.responseTime}h</span>
-                              )}
-                              {ticket.resolutionTime && (
-                                <span>Resolution: {ticket.resolutionTime}h</span>
-                              )}
-                            </div>
-                          </div>
-                          
-                          <div className="flex flex-col gap-3 lg:w-64">
-                            <div className="p-3 bg-muted/50 rounded-lg">
-                              <span className="text-sm text-muted-foreground mb-2 block">Customer Rating:</span>
-                              {renderRating(ticket.rating)}
-                            </div>
-                            <div className="flex gap-2">
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="gap-2 flex-1"
-                                onClick={() => handleOpenChat(ticket)}
-                              >
-                                <MessageSquare className="w-4 h-4" />
-                                Chat
-                              </Button>
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="gap-2 flex-1"
-                                onClick={() => handleOpenHistory(ticket.id)}
-                              >
-                                <History className="w-4 h-4" />
-                                History
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              )}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="audit" className="space-y-6 mt-6">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-2xl font-bold">Audit Logs</h2>
-                <p className="text-muted-foreground">Complete history of all ticket actions and changes</p>
-              </div>
-            </div>
-            
             <Card>
-              <CardContent className="p-6">
-                <div className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    View complete audit logs for all tickets. Click on any ticket in the tickets tab to see its detailed history.
-                  </p>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/50 rounded-lg">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-primary">{storageService.getAuditLogs().length}</div>
-                      <div className="text-sm text-muted-foreground">Total Actions</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-info">{storageService.getAuditLogs().filter(l => l.action === 'created').length}</div>
-                      <div className="text-sm text-muted-foreground">Created</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-warning">{storageService.getAuditLogs().filter(l => l.action === 'updated').length}</div>
-                      <div className="text-sm text-muted-foreground">Updates</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-success">{storageService.getAuditLogs().filter(l => l.action === 'closed').length}</div>
-                      <div className="text-sm text-muted-foreground">Closed</div>
-                    </div>
-                  </div>
-                  <div className="text-center pt-4">
-                    <p className="text-sm text-muted-foreground">
-                      💡 Click the "History" button on any ticket to view its complete activity timeline
-                    </p>
-                  </div>
+              <CardHeader>
+                <CardTitle>
+                  {user.role === 'owner'
+                    ? `${selectedCategory === 'All' ? 'All' : selectedCategory} Tickets Overview`
+                    : selectedCategory === 'All'
+                      ? 'HR & Others Tickets Overview'
+                      : `${selectedCategory} Tickets Overview`}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Tickets by Category</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {Object.entries(analytics.byCategory).map(([cat, count]) => (
+                        count > 0 && (
+                          <div key={cat} className="flex justify-between text-sm">
+                            <span>{cat}:</span>
+                            <span className="font-semibold">{count}</span>
+                          </div>
+                        )
+                      ))}
+                      {Object.values(analytics.byCategory).every((count) => count === 0) && (
+                        <p className="text-sm text-gray-500">No tickets found</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Tickets by Status</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {Object.entries(analytics.byStatus).map(([status, count]) => (
+                        count > 0 && (
+                          <div key={status} className="flex justify-between text-sm">
+                            <span>{status}:</span>
+                            <span className="font-semibold">{count}</span>
+                          </div>
+                        )
+                      ))}
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Performance</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-sm">
+                        <div className="flex justify-between">
+                          <span>CSAT:</span>
+                          <span className="font-semibold">{analytics.csat.toFixed(1)}/5</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>SLA Compliant:</span>
+                          <span className="font-semibold">{analytics.slaCompliant}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>SLA Violated:</span>
+                          <span className="font-semibold text-red-600">{analytics.slaViolated}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Assigned:</span>
+                          <span className="font-semibold text-green-600">{analytics.assigned}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Unassigned:</span>
+                          <span className="font-semibold text-orange-600">{analytics.unassigned}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Avg Response Time:</span>
+                          <span className="font-semibold">{analytics.avgResponseTime.toFixed(1)} hrs</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Avg Resolution Time:</span>
+                          <span className="font-semibold">{analytics.avgResolutionTime.toFixed(1)} hrs</span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="analytics" className="space-y-6 mt-6">
-            <div className="grid lg:grid-cols-3 gap-6">
-              <Card>
-                <CardHeader className="pb-4">
-                  <CardTitle className="flex items-center gap-2">
-                    <Timer className="w-5 h-5" />
-                    Avg Response Time
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-primary">
-                    {avgResponseTime.toFixed(1)}h
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Based on {ticketsWithResponseTime.length} tickets
-                  </p>
-                  <div className="mt-4">
-                    <div className="text-xs text-muted-foreground mb-1">Target: &lt;4h</div>
-                    <Progress value={Math.min((4 - avgResponseTime) / 4 * 100, 100)} className="h-2" />
-                  </div>
-                </CardContent>
-              </Card>
+          <TabsContent value="tickets" className="space-y-6 mt-6">
+            <TicketTable
+              user={user}
+              tickets={tickets}
+              assignableUsers={assignableUsers} // Pass assignableUsers
+              onUpdate={handleUpdate}
+              onAssign={handleAssignTicket}
+              onPageChange={setPage}
+              totalPages={totalPages}
+            />
+          </TabsContent>
 
-              <Card>
-                <CardHeader className="pb-4">
-                  <CardTitle className="flex items-center gap-2">
-                    <CheckCircle className="w-5 h-5" />
-                    Resolution Rate
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-success">
-                    {((closedTickets / totalTickets) * 100 || 0).toFixed(1)}%
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {closedTickets} of {totalTickets} tickets resolved
-                  </p>
-                  <div className="mt-4">
-                    <div className="text-xs text-muted-foreground mb-1">Target: &gt;85%</div>
-                    <Progress value={(closedTickets / totalTickets) * 100 || 0} className="h-2" />
-                  </div>
-                </CardContent>
-              </Card>
+          <TabsContent value="jira-board" className="space-y-6 mt-6">
+            <JiraStyleDashboard
+              user={user}
+              tickets={tickets}
+              assignableUsers={assignableUsers} // Pass assignableUsers
+              onUpdate={handleUpdate}
+              onAssign={handleAssignTicket}
+            />
+          </TabsContent>
 
-              <Card>
-                <CardHeader className="pb-4">
-                  <CardTitle className="flex items-center gap-2">
-                    <Star className="w-5 h-5" />
-                    Customer Satisfaction
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-warning">
-                    {overallCSAT.toFixed(1)}/5
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Based on {ticketsWithRating.length} ratings
-                  </p>
-                  <div className="mt-4">
-                    <div className="text-xs text-muted-foreground mb-1">Target: &gt;4.0</div>
-                    <Progress value={(overallCSAT / 5) * 100} className="h-2" />
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Category Performance Chart */}
+          <TabsContent value="sla-tracker" className="space-y-6 mt-6">
             <Card>
               <CardHeader>
-                <CardTitle>Category Performance Comparison</CardTitle>
-                <CardDescription>Resolution rates and customer satisfaction by category</CardDescription>
+                <CardTitle>SLA Tracker</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-6">
-                  {categoryStats.map(stat => (
-                    <div key={stat.category} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          {getCategoryIcon(stat.category)}
-                          <span className="font-medium">{stat.category}</span>
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          {stat.total} tickets • {stat.resolutionRate.toFixed(1)}% resolved
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span>Resolution Rate</span>
-                            <span>{stat.resolutionRate.toFixed(1)}%</span>
-                          </div>
-                          <Progress value={stat.resolutionRate} className="h-2" />
-                        </div>
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span>Avg Rating</span>
-                            <span>{stat.avgRating > 0 ? `${stat.avgRating.toFixed(1)}/5` : 'N/A'}</span>
-                          </div>
-                          <Progress value={stat.avgRating > 0 ? (stat.avgRating / 5) * 100 : 0} className="h-2" />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <SLATracker
+                  user={user}
+                  tickets={tickets}
+                  onUpdate={handleUpdate}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="audit" className="space-y-6 mt-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Audit Logs</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {tickets.length > 0 ? (
+                  <AuditLogViewer ticketId={tickets[0]?.id} />
+                ) : (
+                  <p className="text-gray-500">No tickets available to view audit logs.</p>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
       </div>
-
-      <ChatModal
-        ticket={selectedTicket}
-        user={user}
-        isOpen={isChatOpen}
-        onClose={() => {
-          setIsChatOpen(false);
-          setSelectedTicket(null);
-          loadTickets();
-        }}
-      />
-
-      <TicketHistoryModal
-        ticketId={selectedTicketForHistory}
-        isModalOpen={isHistoryModalOpen}
-        onClose={() => {
-          setIsHistoryModalOpen(false);
-          setSelectedTicketForHistory(null);
-        }}
-      />
     </div>
   );
-};
-
-export default HRAdminDashboard;
+}

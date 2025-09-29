@@ -1,187 +1,396 @@
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
-import { 
-  Users, LogOut, MessageSquare, Clock, TrendingUp, 
-  AlertTriangle, CheckCircle, Filter, Search, Star,
-  BarChart3, Timer, Target, Download
-} from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
-import { storageService, getCategoryForRole, type Ticket, type User } from "@/utils/storage";
-import ChatModal from "./ChatModal";
-import NotificationSystem from "./NotificationSystem";
+// src/components/CategoryOwnerDashboard.tsx
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
+import {
+  Users, LogOut, MessageSquare, Clock, TrendingUp,
+  AlertTriangle, CheckCircle, Filter, Search, Timer, Target, Download, Shield
+} from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabase';
+import {  Ticket, User, TicketCategory, TicketStatus, TicketPriority, Attachment } from '@/types';
+import { storageService } from '@/utils/storage';
+import { ROLE_CATEGORIES } from '@/lib/config';
+import ChatModal from '@/components/ChatModal';
+import NotificationSystem from '@/components/NotificationSystem';
+import SLATracker from '@/components/SLATracker';
+import TicketTable from '@/components/TicketTable';
+import EscalationModal from '@/components/EscalationModal';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 
 interface CategoryOwnerDashboardProps {
   user: User;
-  onLogout: () => void;
+  onSignOut: () => void;
+  assignableUsers?: User[];
 }
 
-const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps) => {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "tickets" | "analytics">("dashboard");
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [filterPriority, setFilterPriority] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [isEscalationModalOpen, setIsEscalationModalOpen] = useState(false);
-  const [ticketToEscalate, setTicketToEscalate] = useState<Ticket | null>(null);
+const CategoryOwnerDashboard = ({ user, onSignOut, assignableUsers = [] }: CategoryOwnerDashboardProps) => {
   const { toast } = useToast();
-
-  const category = getCategoryForRole(user.role) || "Others";
-
-  useEffect(() => {
-    loadTickets();
-  }, [category]);
-
-  const loadTickets = () => {
-    const categoryTickets = storageService.getTicketsByCategory(category);
-    setTickets(categoryTickets);
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tickets' | 'analytics'>('dashboard');
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [assignableUsersState, setAssignableUsersState] = useState<User[]>(assignableUsers);
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterPriority, setFilterPriority] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [expandedTicket, setExpandedTicket] = useState<string | null>(null);
+  const [isLoadingAttachments, setIsLoadingAttachments] = useState(false);
+  const [attachments, setAttachments] = useState<{ [ticketId: string]: Attachment[] }>({});
+  const [escalationTicketId, setEscalationTicketId] = useState<string | null>(null);
+  const ticketRefs = useRef<{ [ticketId: string]: HTMLDivElement | null }>({});
+  const tabsContentRef = useRef<HTMLDivElement | null>(null);
+  const isOwner = user.role === 'owner';
+  const isCategoryOwner = ['hr_owner', 'it_owner', 'admin_owner', 'accounts_owner'].includes(user.role);
+  const allowedCategories = storageService.getAllowedCategoriesForRole(user.role);
+  const roleToTicketCategory: Record<string, TicketCategory> = {
+    IT: 'IT Infrastructure',
+    HR: 'HR',
+    Administration: 'Administration',
+    Accounts: 'Accounts',
+    Management: 'Others',
+    General: 'Others',
   };
-  
-  const filteredTickets = tickets.filter(ticket => {
-    const matchesStatus = filterStatus === "all" || ticket.status.toLowerCase() === filterStatus;
-    const matchesPriority = filterPriority === "all" || ticket.priority.toLowerCase() === filterPriority;
-    const matchesSearch = ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         ticket.employeeName.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesStatus && matchesPriority && matchesSearch;
-  });
+  const category = roleToTicketCategory[ROLE_CATEGORIES[user.role]] || 'Others';
+
+  // Access control
+  useEffect(() => {
+    if (!user || !['owner', 'hr_owner', 'it_owner', 'admin_owner', 'accounts_owner'].includes(user.role)) {
+      toast({
+        title: 'Access Denied',
+        description: 'You do not have permission to access this dashboard',
+        variant: 'destructive',
+      });
+      navigate('/');
+    }
+  }, [user, navigate, toast]);
+
+  // Load assignable users
+  useEffect(() => {
+    const loadAssignableUsers = async () => {
+      try {
+        if (isOwner) {
+          const users = await storageService.getAllUsers(1, 100);
+          setAssignableUsersState(users.filter((u) => u.role !== 'employee'));
+        } else if (isCategoryOwner) {
+          const [roleUsers, ownerUsers] = await Promise.all([
+            storageService.getUsersByCategory(category),
+            storageService.getUsersByRole('owner'),
+          ]);
+          setAssignableUsersState([...roleUsers, ...ownerUsers]);
+        }
+      } catch (error) {
+        toast({
+          title: 'Error',
+          description: 'Failed to load assignable users',
+          variant: 'destructive',
+        });
+      }
+    };
+    if (assignableUsers.length === 0) {
+      loadAssignableUsers();
+    } else {
+      setAssignableUsersState(assignableUsers);
+    }
+  }, [user.role, assignableUsers, isOwner, isCategoryOwner, category, toast]);
+
+  // Load tickets and attachments
+  useEffect(() => {
+    const loadTickets = async () => {
+      try {
+        const { tickets: categoryTickets } = await storageService.getTicketsByCategoryEnhanced(category);
+        setTickets(categoryTickets);
+        if (!isOwner) {
+          setIsLoadingAttachments(true);
+          try {
+            const attachmentPromises = categoryTickets.map((ticket) =>
+              storageService.getAttachments(ticket.id).then((data) => ({ ticketId: ticket.id, attachments: data }))
+            );
+            const attachmentData = await Promise.all(attachmentPromises);
+            const attachmentMap = attachmentData.reduce((acc, { ticketId, attachments }) => {
+              acc[ticketId] = attachments;
+              return acc;
+            }, {} as { [ticketId: string]: Attachment[] });
+            setAttachments(attachmentMap);
+          } catch (error: any) {
+            await supabase.from('error_logs').insert({
+              error_message: error.message,
+              context: `CategoryOwnerDashboard: load attachments, user=${user.email}`,
+            });
+            toast({
+              title: 'Error',
+              description: 'Failed to load attachments',
+              variant: 'destructive',
+            });
+          } finally {
+            setIsLoadingAttachments(false);
+          }
+        }
+      } catch (error: any) {
+        await supabase.from('error_logs').insert({
+          error_message: error.message,
+          context: `CategoryOwnerDashboard: load tickets, user=${user.email}`,
+        });
+        toast({
+          title: 'Error',
+          description: 'Failed to load tickets',
+          variant: 'destructive',
+        });
+      }
+    };
+    loadTickets();
+  }, [category, isOwner, user.email, toast]);
+
+  // Scroll fix for expanded tickets
+  useEffect(() => {
+    if (expandedTicket && tabsContentRef.current) {
+      const ticketElement = ticketRefs.current[expandedTicket];
+      if (ticketElement && tabsContentRef.current) {
+        const parent = tabsContentRef.current;
+        const ticketTop = ticketElement.offsetTop - 20;
+        parent.scrollTo({ top: ticketTop, behavior: 'auto' });
+        console.log('Scroll details:', {
+          ticketId: expandedTicket,
+          ticketTop: ticketElement.offsetTop,
+          adjustedTop: ticketTop,
+          parentScrollTop: parent.scrollTop,
+          parentHeight: parent.clientHeight,
+          ticketHeight: ticketElement.offsetHeight,
+        });
+      } else {
+        console.warn('Scroll failed:', {
+          ticketElement: !!ticketElement,
+          parent: !!tabsContentRef.current,
+          expandedTicket,
+        });
+      }
+    }
+  }, [expandedTicket]);
+
+  // Filter tickets
+  const filteredTickets = useMemo(() => {
+    return tickets.filter((ticket) => {
+      const matchesStatus = filterStatus === 'all' || ticket.status.toLowerCase() === filterStatus;
+      const matchesPriority = filterPriority === 'all' || ticket.priority.toLowerCase() === filterPriority;
+      const matchesSearch =
+        ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        ticket.employeeName.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesStatus && matchesPriority && matchesSearch;
+    });
+  }, [tickets, filterStatus, filterPriority, searchQuery]);
 
   // Analytics calculations
   const totalTickets = tickets.length;
-  const openTickets = tickets.filter(t => t.status === "Open").length;
-  const inProgressTickets = tickets.filter(t => t.status === "In Progress").length;
-  const escalatedTickets = tickets.filter(t => t.status === "Escalated").length;
-  const closedTickets = tickets.filter(t => t.status === "Closed").length;
-  
-  const ticketsWithRating = tickets.filter(t => t.rating);
-  const avgRating = ticketsWithRating.length > 0 
+  const openTickets = tickets.filter((t) => t.status === 'Open').length;
+  const inProgressTickets = tickets.filter((t) => t.status === 'In Progress').length;
+  const escalatedTickets = tickets.filter((t) => t.status === 'Escalated').length;
+  const closedTickets = tickets.filter((t) => t.status === 'Closed').length;
+  const ticketsWithRating = tickets.filter((t) => t.rating);
+  const avgRating = ticketsWithRating.length > 0
     ? ticketsWithRating.reduce((sum, t) => sum + (t.rating || 0), 0) / ticketsWithRating.length
     : 0;
-
-  const ticketsWithResponseTime = tickets.filter(t => t.responseTime);
+  const ticketsWithResponseTime = tickets.filter((t) => t.responseTime);
   const avgResponseTime = ticketsWithResponseTime.length > 0
     ? ticketsWithResponseTime.reduce((sum, t) => sum + (t.responseTime || 0), 0) / ticketsWithResponseTime.length
     : 0;
-
-  const ticketsWithResolutionTime = tickets.filter(t => t.resolutionTime);
+  const ticketsWithResolutionTime = tickets.filter((t) => t.resolutionTime);
   const avgResolutionTime = ticketsWithResolutionTime.length > 0
     ? ticketsWithResolutionTime.reduce((sum, t) => sum + (t.resolutionTime || 0), 0) / ticketsWithResolutionTime.length
     : 0;
 
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case "Critical": return "bg-priority-critical text-white";
-      case "High": return "bg-priority-high text-white";
-      case "Medium": return "bg-priority-medium text-white";
-      case "Low": return "bg-priority-low text-white";
-      default: return "bg-muted";
-    }
-  };
+  const chartData = [
+    { name: 'Open', count: openTickets, fill: '#3b82f6' },
+    { name: 'In Progress', count: inProgressTickets, fill: '#f59e0b' },
+    { name: 'Escalated', count: escalatedTickets, fill: '#ef4444' },
+    { name: 'Closed', count: closedTickets, fill: '#10b981' },
+  ];
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Open": return "bg-info/10 text-info border-info/20";
-      case "In Progress": return "bg-warning/10 text-warning border-warning/20";
-      case "Escalated": return "bg-destructive/10 text-destructive border-destructive/20";
-      case "Closed": return "bg-success/10 text-success border-success/20";
-      default: return "bg-muted";
-    }
-  };
-
-  const handleStatusChange = (ticketId: string, newStatus: Ticket["status"]) => {
-    storageService.updateTicket(ticketId, { status: newStatus });
-    loadTickets();
-    
-    toast({
-      title: "Status Updated",
-      description: `Ticket ${ticketId} status changed to ${newStatus}`,
-    });
-  };
-
-  const handlePriorityChange = (ticketId: string, newPriority: Ticket["priority"]) => {
-    storageService.updateTicket(ticketId, { priority: newPriority });
-    loadTickets();
-    
-    toast({
-      title: "Priority Updated",
-      description: `Ticket ${ticketId} priority changed to ${newPriority}`,
-    });
-  };
-
-  const handleCategoryChange = (ticketId: string, newCategory: Ticket["category"]) => {
-    storageService.updateTicket(ticketId, { category: newCategory });
-    loadTickets();
-    
-    toast({
-      title: "Category Updated",
-      description: `Ticket ${ticketId} moved to ${newCategory} category`,
-    });
-  };
-
-  const handleEscalateTicket = (ticketId: string) => {
-    const reason = prompt("Please provide an escalation reason:");
-    if (reason) {
-      storageService.updateTicket(ticketId, { 
-        status: "Escalated",
-        escalationReason: reason,
-        escalationDate: new Date().toISOString()
-      });
-      loadTickets();
-      
+  // Ticket update handlers
+  const handleStatusChange = async (ticketId: string, newStatus: TicketStatus) => {
+    const ticket = tickets.find((t) => t.id === ticketId);
+    if (!ticket) return;
+    if (ticket.assignedTo && ticket.assignedTo !== user.email && !isOwner) {
       toast({
-        title: "Ticket Escalated",
-        description: `Ticket ${ticketId} has been escalated`,
+        title: 'Error',
+        description: 'Only the assignee or system owner can update this ticket',
+        variant: 'destructive',
       });
+      return;
+    }
+    try {
+      await storageService.updateTicket(ticketId, { status: newStatus } as Partial<Ticket>, user.email);
+      setTickets((prev) =>
+        prev.map((t) => (t.id === ticketId ? { ...t, status: newStatus } : t))
+      );
+      toast({ title: 'Success', description: 'Ticket status updated' });
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: `CategoryOwnerDashboard: update ticket status, ticketId=${ticketId}`,
+      });
+      toast({ title: 'Error', description: 'Failed to update ticket status', variant: 'destructive' });
     }
   };
 
-  const handleOpenChat = (ticket: Ticket) => {
-    setSelectedTicket(ticket);
-    setIsChatOpen(true);
+  const handleCategoryChange = async (ticketId: string, newCategory: TicketCategory) => {
+    const ticket = tickets.find((t) => t.id === ticketId);
+    if (!ticket) return;
+    if (ticket.assignedTo && ticket.assignedTo !== user.email && !isOwner) {
+      toast({
+        title: 'Error',
+        description: 'Only the assignee or system owner can update this ticket',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!allowedCategories.includes(newCategory)) {
+      toast({
+        title: 'Error',
+        description: 'You are not authorized to assign tickets to this category',
+        variant: 'destructive',
+      });
+      return;
+    }
+    try {
+      await storageService.updateTicket(ticketId, { category: newCategory } as Partial<Ticket>, user.email);
+      setTickets((prev) =>
+        prev.map((t) => (t.id === ticketId ? { ...t, category: newCategory } : t))
+      );
+      toast({ title: 'Success', description: 'Ticket category updated' });
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: `CategoryOwnerDashboard: update ticket category, ticketId=${ticketId}`,
+      });
+      toast({ title: 'Error', description: 'Failed to update ticket category', variant: 'destructive' });
+    }
   };
 
-  const handleExportTickets = () => {
-    const csv = storageService.exportTicketsToCSV(user.role);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${category.toLowerCase().replace(' ', '-')}-tickets-${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
-    
-    toast({
-      title: "Export Successful",
-      description: `${category} tickets exported to CSV`,
-    });
+  const handlePriorityChange = async (ticketId: string, newPriority: TicketPriority) => {
+    const ticket = tickets.find((t) => t.id === ticketId);
+    if (!ticket) return;
+    if (ticket.assignedTo && ticket.assignedTo !== user.email && !isOwner) {
+      toast({
+        title: 'Error',
+        description: 'Only the assignee or system owner can update this ticket',
+        variant: 'destructive',
+      });
+      return;
+    }
+    try {
+      await storageService.updateTicket(ticketId, { priority: newPriority } as Partial<Ticket>, user.email);
+      setTickets((prev) =>
+        prev.map((t) => (t.id === ticketId ? { ...t, priority: newPriority } : t))
+      );
+      toast({ title: 'Success', description: 'Ticket priority updated' });
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: `CategoryOwnerDashboard: update ticket priority, ticketId=${ticketId}`,
+      });
+      toast({ title: 'Error', description: 'Failed to update ticket priority', variant: 'destructive' });
+    }
   };
 
-  const renderRating = (rating?: number) => {
-    if (!rating) return <span className="text-muted-foreground text-sm">Not rated</span>;
-    return (
-      <div className="flex items-center gap-1">
-        {[1, 2, 3, 4, 5].map((star) => (
-          <Star
-            key={star}
-            className={cn("w-4 h-4", star <= rating ? "fill-warning text-warning" : "text-muted-foreground")}
-          />
-        ))}
-        <span className="text-sm text-muted-foreground ml-1">({rating}/5)</span>
-      </div>
-    );
+  const handleRatingChange = async (ticketId: string, rating: number) => {
+    try {
+      await storageService.updateTicket(ticketId, { rating } as Partial<Ticket>, user.email);
+      setTickets((prev) =>
+        prev.map((t) => (t.id === ticketId ? { ...t, rating } : t))
+      );
+      toast({ title: 'Success', description: 'Ticket rating updated' });
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: `CategoryOwnerDashboard: update ticket rating, ticketId=${ticketId}`,
+      });
+      toast({ title: 'Error', description: 'Failed to update ticket rating', variant: 'destructive' });
+    }
+  };
+
+  const handleAssign = async (ticketId: string, assigneeEmail: string) => {
+    const ticket = tickets.find((t) => t.id === ticketId);
+    if (!ticket) return;
+    if (!allowedCategories.includes(ticket.category)) {
+      toast({
+        title: 'Error',
+        description: 'You are not authorized to assign tickets in this category',
+        variant: 'destructive',
+      });
+      return;
+    }
+    try {
+      const emailToAssign = assigneeEmail === 'unassigned' ? null : assigneeEmail;
+      await storageService.updateTicket(ticketId, { assignedTo: emailToAssign }, user.email);
+      setTickets((prev) =>
+        prev.map((t) => (t.id === ticketId ? { ...t, assignedTo: emailToAssign } : t))
+      );
+      toast({
+        title: 'Success',
+        description: emailToAssign
+          ? `Ticket assigned to ${assignableUsersState.find((u) => u.email === emailToAssign)?.name || emailToAssign}`
+          : 'Ticket unassigned',
+      });
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: `CategoryOwnerDashboard: assign ticket, ticketId=${ticketId}`,
+      });
+      toast({ title: 'Error', description: 'Failed to assign ticket', variant: 'destructive' });
+    }
+  };
+
+  const handleEscalateTicket = async (ticketId: string) => {
+    const ticket = tickets.find((t) => t.id === ticketId);
+    if (!ticket) {
+      toast({
+        title: 'Error',
+        description: 'Ticket not found',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setEscalationTicketId(ticketId);
+  };
+
+  const handleExportTickets = async () => {
+    try {
+      const { tickets: categoryTickets } = await storageService.getTicketsByCategoryEnhanced(category);
+      const headers = ['id', 'subject', 'status', 'priority', 'category', 'employeeName', 'assignedTo'];
+      const csvRows = [headers.join(',')];
+      csvRows.push(
+        ...categoryTickets.map((t) =>
+          headers.map((h) => `"${String(t[h as keyof Ticket] || '').replace(/"/g, '""')}"`).join(',')
+        )
+      );
+      const csv = csvRows.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${category.toLowerCase().replace(' ', '-')}-tickets-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast({
+        title: 'Export Successful',
+        description: `${category} tickets exported to CSV`,
+      });
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: `CategoryOwnerDashboard: export tickets, user=${user.email}`,
+      });
+      toast({ title: 'Error', description: 'Failed to export tickets', variant: 'destructive' });
+    }
   };
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="border-b bg-card/50 backdrop-blur supports-[backdrop-filter]:bg-card/50">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
@@ -196,11 +405,22 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
             </div>
             <div className="flex items-center gap-3">
               <NotificationSystem user={user} />
+              {user.verify_role_updater && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.location.href = '/role-update'}
+                  className="flex items-center gap-2 bg-primary/10 border-primary/20 text-primary hover:bg-primary/20"
+                >
+                  <Shield className="h-4 w-4" />
+                  Role Management
+                </Button>
+              )}
               <Button variant="outline" onClick={handleExportTickets} className="gap-2">
                 <Download className="w-4 h-4" />
                 Export
               </Button>
-              <Button variant="outline" onClick={onLogout} className="gap-2">
+              <Button variant="outline" onClick={onSignOut} className="gap-2">
                 <LogOut className="w-4 h-4" />
                 Sign Out
               </Button>
@@ -210,27 +430,26 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
       </header>
 
       <div className="container mx-auto px-4 py-8">
-        {/* Navigation Tabs */}
         <div className="flex gap-2 mb-8">
           <Button
-            variant={activeTab === "dashboard" ? "default" : "outline"}
-            onClick={() => setActiveTab("dashboard")}
+            variant={activeTab === 'dashboard' ? 'default' : 'outline'}
+            onClick={() => setActiveTab('dashboard')}
             className="gap-2"
           >
-            <BarChart3 className="w-4 h-4" />
+            <TrendingUp className="w-4 h-4" />
             Dashboard
           </Button>
           <Button
-            variant={activeTab === "tickets" ? "default" : "outline"}
-            onClick={() => setActiveTab("tickets")}
+            variant={activeTab === 'tickets' ? 'default' : 'outline'}
+            onClick={() => setActiveTab('tickets')}
             className="gap-2"
           >
             <MessageSquare className="w-4 h-4" />
             Tickets ({totalTickets})
           </Button>
           <Button
-            variant={activeTab === "analytics" ? "default" : "outline"}
-            onClick={() => setActiveTab("analytics")}
+            variant={activeTab === 'analytics' ? 'default' : 'outline'}
+            onClick={() => setActiveTab('analytics')}
             className="gap-2"
           >
             <TrendingUp className="w-4 h-4" />
@@ -238,9 +457,8 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
           </Button>
         </div>
 
-        {activeTab === "dashboard" && (
+        {activeTab === 'dashboard' && (
           <div className="space-y-6">
-            {/* Quick Stats */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <Card>
                 <CardContent className="p-6">
@@ -253,7 +471,6 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                   </div>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
@@ -265,7 +482,6 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                   </div>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
@@ -277,7 +493,6 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                   </div>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
@@ -290,8 +505,6 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                 </CardContent>
               </Card>
             </div>
-
-            {/* Status Distribution */}
             <Card>
               <CardHeader>
                 <CardTitle>Ticket Status Distribution</CardTitle>
@@ -299,10 +512,10 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
               <CardContent>
                 <div className="space-y-4">
                   {[
-                    { label: "Open", count: openTickets, color: "bg-info", total: totalTickets },
-                    { label: "In Progress", count: inProgressTickets, color: "bg-warning", total: totalTickets },
-                    { label: "Escalated", count: escalatedTickets, color: "bg-destructive", total: totalTickets },
-                    { label: "Closed", count: closedTickets, color: "bg-success", total: totalTickets },
+                    { label: 'Open', count: openTickets, color: 'bg-info', total: totalTickets },
+                    { label: 'In Progress', count: inProgressTickets, color: 'bg-warning', total: totalTickets },
+                    { label: 'Escalated', count: escalatedTickets, color: 'bg-destructive', total: totalTickets },
+                    { label: 'Closed', count: closedTickets, color: 'bg-success', total: totalTickets },
                   ].map((status) => {
                     const percentage = totalTickets > 0 ? (status.count / totalTickets) * 100 : 0;
                     return (
@@ -318,12 +531,12 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                 </div>
               </CardContent>
             </Card>
+            <SLATracker user={user} tickets={tickets} />
           </div>
         )}
 
-        {activeTab === "tickets" && (
+        {activeTab === 'tickets' && (
           <div className="space-y-6">
-            {/* Filters */}
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -361,127 +574,43 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                 </SelectContent>
               </Select>
             </div>
-
-            {/* Tickets List */}
-            <div className="grid gap-4">
-              {filteredTickets.map((ticket) => (
-                <Card key={ticket.id} className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-6">
-                    <div className="space-y-4">
-                      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <Badge variant="outline" className="font-mono">
-                              {ticket.id}
-                            </Badge>
-                            <Badge className={getPriorityColor(ticket.priority)}>
-                              {ticket.priority}
-                            </Badge>
-                            <Badge className={getStatusColor(ticket.status)}>
-                              {ticket.status}
-                            </Badge>
-                          </div>
-                          <h3 className="font-semibold text-lg mb-2">{ticket.subject}</h3>
-                          <p className="text-muted-foreground mb-2">{ticket.description}</p>
-                          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              <Clock className="w-4 h-4" />
-                              {new Date(ticket.createdAt).toLocaleDateString()}
-                            </span>
-                            <span>Employee: {ticket.employeeName}</span>
-                            {ticket.responseTime && (
-                              <span>Response: {ticket.responseTime}h</span>
-                            )}
-                          </div>
-                        </div>
-                        
-                        <div className="flex flex-col gap-3 lg:w-64">
-                          <div className="grid grid-cols-2 gap-2">
-                            <Select 
-                              value={ticket.status} 
-                              onValueChange={(value: Ticket["status"]) => handleStatusChange(ticket.id, value)}
-                            >
-                              <SelectTrigger className="text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="Open">Open</SelectItem>
-                                <SelectItem value="In Progress">In Progress</SelectItem>
-                                <SelectItem value="Escalated">Escalated</SelectItem>
-                                <SelectItem value="Closed">Closed</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            
-                            <Select 
-                              value={ticket.priority} 
-                              onValueChange={(value: Ticket["priority"]) => handlePriorityChange(ticket.id, value)}
-                            >
-                              <SelectTrigger className="text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="Low">Low</SelectItem>
-                                <SelectItem value="Medium">Medium</SelectItem>
-                                <SelectItem value="High">High</SelectItem>
-                                <SelectItem value="Critical">Critical</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          
-                          <Select 
-                            value={ticket.category} 
-                            onValueChange={(value: Ticket["category"]) => handleCategoryChange(ticket.id, value)}
-                          >
-                            <SelectTrigger className="text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="IT Infrastructure">IT Infrastructure</SelectItem>
-                              <SelectItem value="HR">HR</SelectItem>
-                              <SelectItem value="Administration">Administration</SelectItem>
-                              <SelectItem value="Accounts">Accounts</SelectItem>
-                              <SelectItem value="Others">Others</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          
-                          <div className="flex gap-2">
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="gap-2 flex-1"
-                              onClick={() => handleOpenChat(ticket)}
-                            >
-                              <MessageSquare className="w-4 h-4" />
-                              Chat
-                            </Button>
-                            {ticket.status !== "Escalated" && (
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => handleEscalateTicket(ticket.id)}
-                              >
-                                <AlertTriangle className="w-4 h-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {ticket.rating && (
-                        <div className="pt-2 border-t">
-                          <span className="text-sm text-muted-foreground mr-2">Customer Rating:</span>
-                          {renderRating(ticket.rating)}
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+            <Card>
+              <CardContent className="p-6 max-h-[calc(100vh-200px)] overflow-y-auto" ref={tabsContentRef}>
+                <TicketTable
+                  tickets={filteredTickets}
+                  user={user}
+                  assignableUsers={assignableUsersState}
+                  onUpdate={(ticketId, updates) =>
+                    setTickets((prev) =>
+                      prev.map((t) => (t.id === ticketId ? { ...t, ...updates } : t))
+                    )
+                  }
+                  onAssign={handleAssign}
+                  onEscalate={handleEscalateTicket}
+                  expandedTicket={expandedTicket}
+                  setExpandedTicket={setExpandedTicket}
+                  ticketRefs={ticketRefs}
+                />
+              </CardContent>
+            </Card>
+            {escalationTicketId && (
+              <EscalationModal
+                ticket={tickets.find((t) => t.id === escalationTicketId)!}
+                user={user}
+                category={category}
+                allowedCategories={allowedCategories}
+                onEscalated={(updates) => {
+                  setTickets((prev) =>
+                    prev.map((t) => (t.id === escalationTicketId ? { ...t, ...updates } : t))
+                  );
+                  setEscalationTicketId(null);
+                }}
+              />
+            )}
           </div>
         )}
 
-        {activeTab === "analytics" && (
+        {activeTab === 'analytics' && (
           <div className="space-y-6">
             <div className="grid lg:grid-cols-3 gap-6">
               <Card>
@@ -500,7 +629,6 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                   </p>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardHeader className="pb-4">
                   <CardTitle className="flex items-center gap-2">
@@ -517,11 +645,10 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                   </p>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardHeader className="pb-4">
                   <CardTitle className="flex items-center gap-2">
-                    <Star className="w-5 h-5" />
+                    <Target className="w-5 h-5" />
                     Customer Satisfaction
                   </CardTitle>
                 </CardHeader>
@@ -535,20 +662,46 @@ const CategoryOwnerDashboard = ({ user, onLogout }: CategoryOwnerDashboardProps)
                 </CardContent>
               </Card>
             </div>
+            <Card>
+              <CardHeader>
+                <CardTitle>Ticket Status Distribution</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="name" stroke="#6b7280" />
+                    <YAxis stroke="#6b7280" />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                      }}
+                    />
+                    <Legend />
+                    <Bar dataKey="count" name="Tickets" barSize={50}>
+                      {chartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
           </div>
         )}
       </div>
 
-      <ChatModal
-        ticket={selectedTicket}
-        user={user}
-        isOpen={isChatOpen}
-        onClose={() => {
-          setIsChatOpen(false);
-          setSelectedTicket(null);
-          loadTickets();
-        }}
-      />
+      {expandedTicket && tickets.find((t) => t.id === expandedTicket) && (
+        <ChatModal
+          ticket={tickets.find((t) => t.id === expandedTicket)!}
+          user={user}
+          isOpen={!!expandedTicket}
+          onClose={() => setExpandedTicket(null)}
+        />
+      )}
     </div>
   );
 };
