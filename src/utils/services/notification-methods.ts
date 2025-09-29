@@ -1,10 +1,6 @@
-// src/utils/storage/notification-methods.ts
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { Notification, TicketCategory } from '@/types';
 import { StorageService } from '../storage';
-
-const EDGE_FUNCTION_URL = import.meta.env.VITE_SUPABASE_EDGE_FUNCTION_URL;
-const SERVICE_ROLE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 
 interface ChatNotificationPayload {
   ticket_id: string;
@@ -50,10 +46,6 @@ export async function addNotification(
   }
 }
 
-/**
- * Send Google Chat notification via edge function
- * This is the main function to trigger external notifications
- */
 export async function sendChatNotification(
   this: StorageService,
   payload: ChatNotificationPayload
@@ -66,24 +58,23 @@ export async function sendChatNotification(
 
     // Map category for webhook (Others -> HR)
     const webhookCategory = payload.category ? getCategoryForWebhook(payload.category) : null;
-    
+
     const requestPayload = {
       ...payload,
       category: webhookCategory,
     };
 
-    const response = await fetch(EDGE_FUNCTION_URL, {
+    const response = await fetch('/api/send-chat-notification', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
       },
       body: JSON.stringify(requestPayload),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Edge function failed: ${response.status} - ${errorText}`);
+      throw new Error(`Serverless function failed: ${response.status} - ${errorText}`);
     }
 
     const result = await response.json();
@@ -93,7 +84,6 @@ export async function sendChatNotification(
 
     console.log('Chat notification sent successfully:', result.results);
   } catch (error: any) {
-    // Log error but don't throw - chat notifications are not critical
     console.error('Chat notification failed:', error.message);
     await supabase.from('error_logs').insert({
       error_message: error.message,
