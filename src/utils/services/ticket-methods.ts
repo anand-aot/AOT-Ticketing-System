@@ -23,22 +23,22 @@ export function getAllowedCategoriesForRole(role: Role): TicketCategory[] {
   }
 }
 
-export async function selectAssigneeForCategory(this: StorageService, category: TicketCategory): Promise<string | null> {
-  try {
-    const users = await this.getUsersByCategory(category);
-    if (users.length === 0) {
-      return null;
-    }
-    // Simple round-robin assignment: select the first user (can be enhanced with load balancing)
-    return users[0].email;
-  } catch (error: any) {
-    await supabase.from('error_logs').insert({
-      error_message: error.message,
-      context: `selectAssigneeForCategory: category=${category}`,
-    });
-    return null;
-  }
-}
+// export async function selectAssigneeForCategory(this: StorageService, category: TicketCategory): Promise<string | null> {
+//   try {
+//     const users = await this.getUsersByCategory(category);
+//     if (users.length === 0) {
+//       return null;
+//     }
+//     // Simple round-robin assignment: select the first user (can be enhanced with load balancing)
+//     return users[0].email;
+//   } catch (error: any) {
+//     await supabase.from('error_logs').insert({
+//       error_message: error.message,
+//       context: `selectAssigneeForCategory: category=${category}`,
+//     });
+//     return null;
+//   }
+// }
 
 export async function getUsersByCategory(this: StorageService, category: TicketCategory): Promise<User[]> {
   try {
@@ -246,7 +246,7 @@ export async function addTicket(
       : this._calculateSlaDueDate(ticket.category, ticket.priority);
 
     // Auto-assign ticket based on category
-    const assignedTo = await this.selectAssigneeForCategory(ticket.category);
+    // const assignedTo = await this.selectAssigneeForCategory(ticket.category);
 
     const newTicket = {
       subject: ticket.subject,
@@ -259,7 +259,8 @@ export async function addTicket(
       employee_email: ticket.employeeEmail.toLowerCase(),
       department: ticket.department || null,
       sub_department: ticket.subDepartment || null,
-      assigned_to: assignedTo,
+      // assigned_to: assignedTo,
+      assigned_to: null,
       sla_due_date: slaDueDate,
       response_time: null,
       resolution_time: null,
@@ -388,10 +389,10 @@ export async function updateTicket(
     }
 
     // Handle category change: reassign to a new user if category changes
-    if (updates.category && updates.category !== existingTicket.category) {
-      const newAssignee = await this.selectAssigneeForCategory(updates.category);
-      supabaseUpdates.assigned_to = newAssignee;
-    }
+    // if (updates.category && updates.category !== existingTicket.category) {
+    //   const newAssignee = await this.selectAssigneeForCategory(updates.category);
+    //   supabaseUpdates.assigned_to = newAssignee;
+    // }
 
     for (const [key, value] of Object.entries(updates)) {
       if (keyMap[key] && value !== undefined) {
