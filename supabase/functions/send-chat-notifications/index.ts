@@ -219,8 +219,18 @@ serve(async (req) => {
       if (category) {
         const message =
           status === 'Escalated'
-            ? `🚨 Escalated: ${employee_name || 'Unknown'} (ID: ${employee_id || 'N/A'}, Dept: ${department || 'N/A'}). Reason: ${escalation_reason || 'N/A'}\nView: ${ticketUrl}`
-            : `ℹ️ Update: ${employee_name || 'Unknown'} (ID: ${employee_id || 'N/A'}, Dept: ${department || 'N/A'}). Status: ${status}\nView: ${ticketUrl}`;
+            ? `**Escalated**\n` +
+            `**Employee:** ${employee_name || 'Unknown'}\n` +
+            `**ID:** ${employee_id || 'N/A'}\n` +
+            `**Department:** ${department || 'N/A'}\n` +
+            `**Reason:** ${escalation_reason || 'N/A'}\n` +
+            `**View:** ${ticketUrl}`
+            : `**Update**\n` +
+            `**Employee:** ${employee_name || 'Unknown'}\n` +
+            `**ID:** ${employee_id || 'N/A'}\n` +
+            `**Department:** ${department || 'N/A'}\n` +
+            `**Status:** ${status}\n` +
+            `**View:** ${ticketUrl}`;
         results.webhookSent = await sendWebhook(category, message);
       }
     }
@@ -233,7 +243,12 @@ serve(async (req) => {
         }
       }
       if (category) {
-        const message = `💬 New message from ${sender_role} on ticket ${ticket_id}: ${message_content.substring(0, 100)}...\nView: ${ticketUrl}`;
+        const message = `
+          <img src="https://cdn-icons-png.flaticon.com/512/3048/3048495.png" width="20" height="20" />
+          <b>New message from ${sender_role} on ticket ${ticket_id}:</b>
+          <p>${message_content.substring(0, 100)}</p>
+          <a href="${ticketUrl}" target="_blank">View</a>
+        `;
         results.webhookSent = await sendWebhook(category, message);
       }
     }

@@ -24,53 +24,53 @@ export default function TicketView() {
   const { toast } = useToast();
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        // Fetch user from session
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user) {
-          throw new Error('No user session found');
-        }
-        const email = session.user.email;
-        const role = session.user.user_metadata?.role || 'employee';
-        if (!email) {
-          throw new Error('No email found in session');
-        }
-        setUser({
-          email: email.toLowerCase(),
-          name: session.user.user_metadata?.name || 'Unknown',
-          role: role as Role,
-        });
-
-        // Fetch ticket
-        if (!ticketId) {
-          throw new Error('Invalid ticket ID');
-        }
-        const ticketData = await storageService.getTicketById(ticketId);
-        if (!ticketData) {
-          throw new Error('Ticket not found');
-        }
-        setTicket(ticketData);
-
-        // Fetch attachments
-        const attachmentData = await storageService.getAttachments(ticketId);
-        setAttachments(attachmentData);
-      } catch (error: any) {
-        await supabase.from('error_logs').insert({
-          error_message: error.message,
-          context: `TicketView: ticketId=${ticketId}, user_email=${user?.email || 'unknown'}`,
-        });
-        toast({
-          title: 'Error',
-          description: `Failed to load ticket: ${error.message}`,
-          variant: 'destructive',
-        });
-      } finally {
-        setLoading(false);
+  async function fetchData() {
+    try {
+      // Fetch user from session
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        throw new Error('No user session found');
       }
+      const email = session.user.email;
+      const role = session.user.user_metadata?.role || 'employee';
+      if (!email) {
+        throw new Error('No email found in session');
+      }
+      setUser({
+        email: email.toLowerCase(),
+        name: session.user.user_metadata?.name || 'Unknown',
+        role: role as Role,
+      });
+
+      // Fetch ticket
+      if (!ticketId) {
+        throw new Error('Invalid ticket ID');
+      }
+      const ticketData = await storageService.getTicketById(ticketId);
+      if (!ticketData) {
+        throw new Error('Ticket not found');
+      }
+      setTicket(ticketData);
+
+      // Fetch attachments
+      const attachmentData = await storageService.getAttachments(ticketId);
+      setAttachments(attachmentData);
+    } catch (error: any) {
+      await supabase.from('error_logs').insert({
+        error_message: error.message,
+        context: `TicketView: ticketId=${ticketId}, user_email=${user?.email || 'unknown'}`,
+      });
+      toast({
+        title: 'Error',
+        description: `Failed to load ticket: ${error.message}`,
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
     }
-    fetchData();
-  }, [ticketId, toast, user]);
+  }
+  fetchData();
+}, [ticketId, toast, user]);
 
   const downloadAttachment = (attachment: Attachment) => {
     const link = document.createElement('a');
