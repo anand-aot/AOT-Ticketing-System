@@ -177,8 +177,11 @@ export async function uploadAttachment(
   }
 }
 
+
+// src/utils/storage/attachment-methods.ts
 export async function getAttachments(this: StorageService, ticketId: string): Promise<Attachment[]> {
   try {
+    console.log('Fetching attachments for ticketId:', ticketId);
     const { data, error } = await supabaseAdmin
       .from('attachments')
       .select('*')
@@ -186,10 +189,16 @@ export async function getAttachments(this: StorageService, ticketId: string): Pr
       .order('uploaded_at', { ascending: false });
     
     if (error) {
-      console.error('Get attachments error:', error);
+      console.error('Get attachments error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
       throw new Error(`Failed to fetch attachments: ${error.message}`);
     }
     
+    console.log('Attachments fetched:', data);
     return (
       data?.map((item) => ({
         id: item.id,
@@ -203,7 +212,11 @@ export async function getAttachments(this: StorageService, ticketId: string): Pr
       })) || []
     );
   } catch (error: any) {
-    console.error('Failed to get attachments:', error);
+    console.error('Failed to get attachments:', {
+      message: error.message,
+      stack: error.stack,
+      ticketId,
+    });
     
     // Log error to database
     try {
@@ -215,7 +228,7 @@ export async function getAttachments(this: StorageService, ticketId: string): Pr
       console.error('Failed to log error:', logError);
     }
     
-    throw error;
+    return []; // Return empty array instead of throwing
   }
 }
 

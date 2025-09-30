@@ -641,6 +641,7 @@ export async function cleanupOldTickets(this: StorageService): Promise<void> {
   }
 }
 
+// src/utils/storage/ticket-methods.ts
 export function mapSupabaseTicketToAppTicket(this: StorageService, supabaseTicket: any): Ticket {
   return {
     id: supabaseTicket.id,
@@ -652,8 +653,8 @@ export function mapSupabaseTicketToAppTicket(this: StorageService, supabaseTicke
     createdAt: supabaseTicket.created_at,
     updatedAt: supabaseTicket.updated_at,
     employeeId: supabaseTicket.employee_id || null,
-    employeeName: supabaseTicket.employee_name,
-    employeeEmail: supabaseTicket.employee_email,
+    employeeName: supabaseTicket.employee_name || null,
+    employeeEmail: supabaseTicket.employee_email || null,
     department: supabaseTicket.department || null,
     subDepartment: supabaseTicket.sub_department || null,
     assignedTo: supabaseTicket.assigned_to,
@@ -664,7 +665,16 @@ export function mapSupabaseTicketToAppTicket(this: StorageService, supabaseTicke
     escalationDate: supabaseTicket.escalation_date,
     slaViolated: supabaseTicket.sla_violated,
     slaDueDate: supabaseTicket.sla_due_date,
-    attachments: supabaseTicket.attachments || [],
+    attachments: (supabaseTicket.attachments || []).map((item: any) => ({
+      id: item.id,
+      ticketId: item.ticket_id,
+      fileName: item.file_name,
+      fileSize: item.file_size,
+      fileType: item.file_type || '', // Default to empty string
+      uploadedBy: item.uploaded_by,
+      uploadedAt: item.uploaded_at,
+      fileUrl: item.file_url,
+    })),
     messages: supabaseTicket.chat_messages || [],
   };
 }

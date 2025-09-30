@@ -74,7 +74,7 @@ export interface Attachment {
   ticketId: string;
   fileName: string;
   fileSize: number;
-  fileType: string;
+  fileType: string | null;
   uploadedBy: string;
   uploadedAt: string;
   fileUrl: string;

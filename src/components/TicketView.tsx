@@ -1,3 +1,4 @@
+// src/components/TicketView.tsx
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Ticket, Attachment, User, Role } from '@/types';
@@ -24,53 +25,60 @@ export default function TicketView() {
   const { toast } = useToast();
 
   useEffect(() => {
-  async function fetchData() {
-    try {
-      // Fetch user from session
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) {
-        throw new Error('No user session found');
-      }
-      const email = session.user.email;
-      const role = session.user.user_metadata?.role || 'employee';
-      if (!email) {
-        throw new Error('No email found in session');
-      }
-      setUser({
-        email: email.toLowerCase(),
-        name: session.user.user_metadata?.name || 'Unknown',
-        role: role as Role,
-      });
+    async function fetchData() {
+      setLoading(true);
+      try {
+        // Fetch user from session
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+          throw new Error('No user session found');
+        }
+        const email = session.user.email;
+        const role = session.user.user_metadata?.role || 'employee';
+        if (!email) {
+          throw new Error('No email found in session');
+        }
+        setUser({
+          email: email.toLowerCase(),
+          name: session.user.user_metadata?.name || 'Unknown',
+          role: role as Role,
+          id: session.user.id,
+          google_id: session.user.user_metadata?.google_id || null,
+          employeeId: session.user.user_metadata?.employee_id || null,
+          department: session.user.user_metadata?.department || null,
+          sub_department: session.user.user_metadata?.sub_department || null,
+          created_at: session.user.created_at,
+          updated_at: session.user.updated_at,
+          verify_role_updater: session.user.user_metadata?.verify_role_updater || false,
+        });
 
-      // Fetch ticket
-      if (!ticketId) {
-        throw new Error('Invalid ticket ID');
+        // Fetch ticket
+        if (!ticketId) {
+          throw new Error('Invalid ticket ID');
+        }
+        const ticketData = await storageService.getTicketById(ticketId);
+        if (!ticketData) {
+          throw new Error('Ticket not found');
+        }
+        setTicket(ticketData);
+        setAttachments(ticketData.attachments || []);
+      } catch (error: any) {
+        await supabase.from('error_logs').insert({
+          error_message: error.message,
+          context: `TicketView: ticketId=${ticketId}, user_email=${user?.email || 'unknown'}`,
+        });
+        toast({
+          title: 'Error',
+          description: `Failed to load ticket: ${error.message}`,
+          variant: 'destructive',
+        });
+        setTicket(null);
+      } finally {
+        setLoading(false);
       }
-      const ticketData = await storageService.getTicketById(ticketId);
-      if (!ticketData) {
-        throw new Error('Ticket not found');
-      }
-      setTicket(ticketData);
-
-      // Fetch attachments
-      const attachmentData = await storageService.getAttachments(ticketId);
-      setAttachments(attachmentData);
-    } catch (error: any) {
-      await supabase.from('error_logs').insert({
-        error_message: error.message,
-        context: `TicketView: ticketId=${ticketId}, user_email=${user?.email || 'unknown'}`,
-      });
-      toast({
-        title: 'Error',
-        description: `Failed to load ticket: ${error.message}`,
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
     }
-  }
-  fetchData();
-}, [ticketId, toast, user]);
+    fetchData();
+  }, [ticketId, toast]);
 
   const downloadAttachment = (attachment: Attachment) => {
     const link = document.createElement('a');
@@ -83,7 +91,7 @@ export default function TicketView() {
   };
 
   const handleClose = () => {
-    navigate(-1); // Go back to the previous page
+    navigate(-1);
   };
 
   if (loading) {
@@ -186,7 +194,7 @@ export default function TicketView() {
                     </p>
                     <p className="text-sm">
                       <strong className="font-semibold text-foreground">Employee Code:</strong>{' '}
-                      <span className="text-muted-foreground">{ticket.employee_id || 'N/A'}</span>
+                      <span className="text-muted-foreground">{ticket.employeeId || 'N/A'}</span>
                     </p>
                     <p className="text-sm">
                       <strong className="font-semibold text-foreground">Email:</strong>{' '}
@@ -254,11 +262,11 @@ export default function TicketView() {
                       className="flex items-center justify-between p-3 bg-background rounded-lg border border-primary/20 hover:bg-muted/30 transition-colors"
                     >
                       <div className="flex items-center gap-3">
-                        {attachment.fileType.startsWith('image/') ? (
+                        {attachment.fileType && typeof attachment.fileType === 'string' && attachment.fileType.startsWith('image/') ? (
                           <img
                             src={attachment.fileUrl}
                             alt={attachment.fileName}
-                            className="h-30 w-20 object-cover rounded-md"
+                            className="h-20 w-20 object-cover rounded-md"
                           />
                         ) : (
                           <FileText className="h-6 w-6 text-primary" />
@@ -275,7 +283,7 @@ export default function TicketView() {
                           <p className="text-xs text-muted-foreground">
                             {(attachment.fileSize / 1024).toFixed(1)} KB, Uploaded by {attachment.uploadedBy} on {formatDate(attachment.uploadedAt)}
                           </p>
-                          {(attachment.fileType.startsWith('image/') || attachment.fileType === 'application/pdf') && (
+                          {(attachment.fileType && typeof attachment.fileType === 'string' && (attachment.fileType.startsWith('image/') || attachment.fileType === 'application/pdf')) && (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -331,11 +339,6 @@ export default function TicketView() {
                       <TicketHistoryModal ticketId={ticket.id} />
                     </TooltipTrigger>
                     <TooltipContent>View History</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                    </TooltipTrigger>
-                    <TooltipContent>Close Ticket View</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
