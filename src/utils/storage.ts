@@ -26,7 +26,7 @@ import {
   getTicketsEnhanced,
   getTicketsByCategoryEnhanced,
   getTicketsByMultipleCategories,
-  selectAssigneeForCategory
+  // selectAssigneeForCategory
 } from './services/ticket-methods';
 import {
   createTicketTemplate,
@@ -110,7 +110,7 @@ export class StorageService {
     this.getTicketsEnhanced = getTicketsEnhanced.bind(this);
     this.getTicketsByCategoryEnhanced = getTicketsByCategoryEnhanced.bind(this);
     this.getTicketsByMultipleCategories = getTicketsByMultipleCategories.bind(this);
-    this.selectAssigneeForCategory = selectAssigneeForCategory.bind(this);
+    // this.selectAssigneeForCategory = selectAssigneeForCategory.bind(this);
     this.initializeErrorLogging();
   }
 
@@ -150,7 +150,7 @@ export class StorageService {
   getTicketsEnhanced: (page?: number, pageSize?: number) => Promise<TicketResponse>;
   getTicketsByCategoryEnhanced: (category: TicketCategory, page?: number, pageSize?: number) => Promise<TicketResponse>;
   getTicketsByMultipleCategories: (categories: TicketCategory[], page?: number, pageSize?: number) => Promise<TicketResponse>;
-  selectAssigneeForCategory: (category: TicketCategory) => Promise<User | null>;
+  // selectAssigneeForCategory: (category: TicketCategory) => Promise<User | null>;
   createSLAConfig: (slaConfig: Omit<SLAConfig, 'id' | 'createdAt'>) => Promise<SLAConfig>;
   getSLAConfig: (category: TicketCategory, priority: TicketPriority) => Promise<SLAConfig | null>;
   updateSLAConfig: (id: string, updates: Partial<SLAConfig>) => Promise<SLAConfig>;
