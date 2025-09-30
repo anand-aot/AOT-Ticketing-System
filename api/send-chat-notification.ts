@@ -16,8 +16,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const EDGE_FUNCTION_URL = process.env.SUPABASE_EDGE_FUNCTION_URL!;
-  const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  const EDGE_FUNCTION_URL = process.env.VITE_SUPABASE_EDGE_FUNCTION_URL!;
+  const SERVICE_ROLE_KEY = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY!;
 
   try {
     const payload = req.body;
